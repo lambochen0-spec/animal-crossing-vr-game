@@ -184,7 +184,12 @@ export function GameUI() {
       {/* VR 入口：检测到 VR 设备时显示 */}
       {hud.vrSupported && !hud.vrActive && hud.titleStage === null && (
         <button
-          onClick={() => commands.push({ type: 'enterVR' })}
+          onClick={() => {
+                      // 1) 立刻弹 toast 让你知道按钮真被点了（不依赖 enterVRNow/commands）
+                      store.patch({ toast: { title: '正在进入 VR', icon: '🥽', desc: '请接受头显授权' } });
+                      // 2) 再走命令队列进 VR
+                      commands.push({ type: 'enterVR' });
+                    }}
           className="pointer-events-auto absolute top-16 right-3 rounded-2xl bg-indigo-600/90 text-white font-bold px-4 py-2.5 shadow-lg hover:bg-indigo-500"
         >
           🥽 进入 VR
