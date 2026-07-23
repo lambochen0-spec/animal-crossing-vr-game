@@ -32,116 +32,109 @@ export interface VRHost {
 // 原理：原地踏步时头部会在水平方向左右/前后摆动（重心转移），
 // 检测水平位置「离开→到达峰值→返回原点附近」这样一个周期 = 一步。
 // 水平摆动幅度远大于Quest头显的垂直晃动，识别更可靠。
+// ================= 原地踏步检测（Babylon.js 水平振荡方案）=================
+// 原理：原地踏步时头部会在水平方向左右/前后摆动（重心转移），
+// 检测水平位置「离开→到达峰值→返回原点附近」这样一个周期 = 一步。
+// 水平摆动幅度远大于Quest头显的垂直晃动，识别更可靠。
 export class MarchDetector {
-  // ---- 第一阶段：缓冲区扫描（检测第一步） ----
+  // ---- 阶段1：缓冲区扫描（检测第一步，校准步态轴） ----
   private buf: { x: number; z: number }[] = [];
   private readonly SAMPLE_DT = 1 / 15;
   private sampleT = 0;
   private entropy = 0;
-  private detecting = true; // true=阶段1, false=阶段2
+  private detecting = true;
 
-  // ---- 第二阶段：连续追踪（沿步态轴跟踪相位） ----
-  private axisX = 0; private axisZ = 0;  // 步态轴方向（归一化）
-  private apexDist = 0;                   // 波峰幅度
-  private phase = 0;                      // 0~1: 在轴上的位置
+  // ---- 阶段2：相位追踪（沿步态轴跟踪，累计 + 衰减） ----
+  private axisX = 0; private axisZ = 0;
+  private apexDist = 0;
+  private phase = 0;
   private prevPhase = -1;
-  private movingForward = false;          // 相位正在增长
-  private lastAxisReset = 0;              // 上次重置轴的时间
+  private lastAxisReset = 0;
+  private movement = 0;             // ← Babylon 的 movement 累加器
 
-  private stepTs: number[] = [];
-  private smoothSpeed = 0;
   speed = 0;
   running = false;
-
-  private toastCb: ((msg: string) => void) | null = null;
-  setToastCb(cb: (msg: string) => void) { this.toastCb = cb; }
 
   disturb() {}
 
   private detectStep(headX: number, headZ: number, t: number) {
     this.buf.push({ x: headX, z: headZ });
     if (this.buf.length > 20) this.buf.shift();
-    if (this.buf.length < 7) return false;
+    if (this.buf.length < 7) return;
 
     const origin = this.buf[0];
-    const dx1 = origin.x - this.buf[1].x;
-    const dz1 = origin.z - this.buf[1].z;
-    this.entropy = this.entropy * 0.93 + Math.sqrt(dx1 * dx1 + dz1 * dz1);
-    if (this.entropy > 0.4) return false;
+    const d1 = origin.x - this.buf[1].x, d2 = origin.z - this.buf[1].z;
+    this.entropy = this.entropy * 0.93 + Math.sqrt(d1 * d1 + d2 * d2);
+    if (this.entropy > 0.4) return;
 
     const startIdx = Math.floor(this.buf.length / 3);
-    for (let sameIdx = startIdx; sameIdx < this.buf.length; sameIdx++) {
-      const dx = origin.x - this.buf[sameIdx].x;
-      const dz = origin.z - this.buf[sameIdx].z;
+    for (let si = startIdx; si < this.buf.length; si++) {
+      const dx = origin.x - this.buf[si].x;
+      const dz = origin.z - this.buf[si].z;
       if (Math.sqrt(dx * dx + dz * dz) < 0.03) {
         let bestApex = 0, bestIdx = -1;
-        for (let k = 1; k < sameIdx; k++) {
-          const ax = this.buf[k].x - origin.x;
-          const az = this.buf[k].z - origin.z;
+        for (let k = 1; k < si; k++) {
+          const ax = this.buf[k].x - origin.x, az = this.buf[k].z - origin.z;
           const ad = Math.sqrt(ax * ax + az * az);
           if (ad > bestApex) { bestApex = ad; bestIdx = k; }
         }
         if (bestApex >= 0.05) {
-          // 第一步检测成功：记步 + 建立步态轴
-          this.stepTs.push(t);
-          if (this.stepTs.length > 8) this.stepTs.shift();
-          // 计算步态轴（起点→波峰方向）
+          // 建立步态轴（起点→波峰方向）
           this.axisX = this.buf[bestIdx].x - origin.x;
           this.axisZ = this.buf[bestIdx].z - origin.z;
           const len = Math.sqrt(this.axisX * this.axisX + this.axisZ * this.axisZ);
           if (len > 0.01) { this.axisX /= len; this.axisZ /= len; }
           this.apexDist = bestApex;
-          this.phase = 1;
+          this.phase = 0;
           this.prevPhase = -1;
-          this.movingForward = true;
+          this.movement = 0;
           this.detecting = false;
           this.lastAxisReset = t;
-          this.buf.splice(0, sameIdx);
-          return true;
+          this.buf.splice(0, si);
+          // 第一步先给个小速度让玩家感到响应
+          this.movement = 0.15;
         }
+        return;
       }
     }
-    return false;
   }
 
   private trackStep(headX: number, headZ: number, t: number) {
-    // 沿步态轴投影当前位置
+    // 沿步态轴投影 → 相位（0~1, 从原点→波峰）
     const proj = headX * this.axisX + headZ * this.axisZ;
-    // 算相位（0~1，从原点映射到波峰）
-    let rawPhase = 0;
-    if (this.apexDist > 0.01) {
-      rawPhase = Math.abs(proj) / this.apexDist;
-    }
-    // 判断运动方向：相位是否在增长
+    const rawPhase = this.apexDist > 0.01 ? Math.abs(proj) / this.apexDist : 0;
+
     if (this.prevPhase >= 0) {
       const dPhase = rawPhase - this.prevPhase;
 
-      // 相位在增长 → 朝波峰走 → 产生移动
+      // 相位增长 → 朝波峰走 → 累计 movement（Babylon 的 0.024 × Δt）
       if (dPhase > 0.005) {
-        this.movingForward = true;
-        this.stepTs.push(t);
-        if (this.stepTs.length > 8) this.stepTs.shift();
-        // 穿越中点（0.5）时记一步
-        if (this.prevPhase < 0.5 && rawPhase >= 0.5) {
-          // 额外的半步标记（可选）
-        }
+        this.movement += 0.024 * dPhase;
       }
 
-      // 相位大幅下降 → 完成了半周期，重置
+      // 相位大幅下降 → 完成半个周期，重置相位追踪
       if (dPhase < -0.15) {
-        this.phase = 0;
         this.prevPhase = -1;
+        return;
       }
     }
 
     this.phase = rawPhase;
     this.prevPhase = rawPhase;
 
-    // 超过2秒没新步 → 回到阶段1重新校准
-    if (t - this.lastAxisReset > 2) {
+    // 每帧衰减（Babylon 的 ×0.85 @ 15 FPS）
+    this.movement *= 0.85;
+
+    // movement → speed
+    this.speed = Math.min(3.0, this.movement);
+
+    // 超过 2 秒没移动 → 回阶段1
+    if (t - this.lastAxisReset > 2 && this.movement < 0.01) {
       this.detecting = true;
       this.entropy = 0;
       this.buf = [];
+      this.movement = 0;
+      this.speed = 0;
     }
   }
 
@@ -155,25 +148,8 @@ export class MarchDetector {
     } else {
       this.trackStep(headX, headZ, t);
     }
-
-    // 计算速度
-    let target = 0;
-    if (this.stepTs.length >= 1) {
-      const hz = this.stepTs.length >= 2
-        ? 1 / ((this.stepTs[this.stepTs.length - 1] - this.stepTs[0]) / (this.stepTs.length - 1))
-        : 1.25;
-      if (hz >= 0.6) {
-        target = Math.min(3.0, 0.5 + hz * 0.6);
-        this.running = hz >= 2.2;
-      }
-    }
-    const k = target > this.smoothSpeed ? 10 : 20;
-    this.smoothSpeed += (target - this.smoothSpeed) * Math.min(1, dt * k);
-    if (this.smoothSpeed < 0.05) this.smoothSpeed = 0;
-    this.speed = this.smoothSpeed;
   }
 }
-
 // ================= 挥臂检测 =================
 // 跟踪手柄世界速度：向下劈/向前挥超过阈值 = 一次挥动
 export class SwingDetector {
