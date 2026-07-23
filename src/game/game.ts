@@ -3174,6 +3174,7 @@ export class Game {
     if (today !== this.lastDayTick) { this.lastDayTick = today; this.updateCamp(); }
     if (this.vrSys.active) this.vrSys.update(dt, now); // VR：踏步移动/挥臂/面板（会写入 touchInput 与 camYaw）
     this.updatePlayer(dt);
+    if (this.vrSys.active) this.vrSys.syncRigPosition(); // 同步 rig 到最新 playerPos，消除帧滞后
     this.updateBoat(dt);
     if (!this.partyActive) this.updateVillagers(dt);
     this.updateFishing(dt);
