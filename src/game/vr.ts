@@ -232,23 +232,27 @@ export class VRSystem {
   }
 
   async enter() {
-    if (this.active || !this.supported) return;
+    // [debug] VR 按钮失效诊断：每条分支被走都打点
+    console.log('[vr.enter] begin, active=', this.active, 'supported=', this.supported, 'entering=', this.entering);
+    if (this.active || !this.supported) { console.log('[vr.enter] 早返回'); return; }
+    this.entering = true;
     const xr = (navigator as Navigator & { xr?: XRSystem }).xr!;
     try {
       const session = await xr.requestSession('immersive-vr', {
         optionalFeatures: ['local-floor', 'bounded-floor'],
       });
+      console.log('[vr.enter] session 创建成功', session);
       this.session = session;
       const r = this.host.renderer;
       r.xr.enabled = true;
       r.xr.setReferenceSpaceType('local-floor');
-      // VR 减负：降渲染分辨率 + 缩短视距（大世界立体渲染是卡顿主因，远裁剪直接少画一半物体）
+      // VR 减负：降渲染分辨率。视距不动（用户对游戏视野有强偏好，宁可糊不愿小）。
       this.savedPixelRatio = r.getPixelRatio();
       r.setPixelRatio(Math.min(0.65, this.savedPixelRatio));
       this.savedFar = this.host.camera.far;
-      this.host.camera.far = 35;
+      // this.host.camera.far 不动
       const fog = this.host.scene.fog as THREE.Fog | null;
-      if (fog) { this.savedFog = [fog.near, fog.far]; fog.near = 8; fog.far = 32; }
+      if (fog) { this.savedFog = [fog.near, fog.far]; } // 雾也保持不变
       await r.xr.setSession(session);
       // 固定注视点渲染：周边自然模糊（0=无, 1=中, 2=强, 3=最强）。VR 转头时周边本来就会糊，
       // foveation 把这种"转头边缘糊"做成视觉默认状态——动态降低中心分辨率感觉就不明显。
@@ -257,15 +261,21 @@ export class VRSystem {
       this.host.onVRStart();
       session.addEventListener('end', () => this.teardown());
       this.active = true;
+      console.log('[vr.enter] active=true 已设置');
       store.patch({ vrActive: true });
-    } catch {
+    } catch (e) {
+      console.error('[vr.enter] 失败:', e);
       store.patch({ toast: { title: 'VR 启动失败', icon: '🥽', desc: '请确认头显已连接并授权' } });
+    } finally {
+      this.entering = false;
+      console.log('[vr.enter] end, entering=false');
     }
   }
 
   exit() { void this.session?.end(); }
 
   private savedPixelRatio = 1;
+  private entering = false;
   private savedFar = 600;
   private savedFog: [number, number] | null = null;
 
