@@ -92,8 +92,8 @@ export class MarchDetector {
           if (ad > apexDist) apexDist = ad;
         }
 
-        // 波峰必须 >= 9cm
-        if (apexDist >= 0.09) {
+        // 波峰必须 >= 5cm（Babylon 的 9cm 是首次校准用的，连续检测用更低阈值）
+        if (apexDist >= 0.05) {
           // 记一步
           this.stepTs.push(t);
           if (this.stepTs.length > 8) this.stepTs.shift();
