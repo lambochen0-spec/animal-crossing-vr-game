@@ -952,10 +952,13 @@ export class Game {
 
   // VR 按钮直启：不经过命令队列（头显浏览器要求用户手势立即触发，隔帧会被静默拒绝）
   enterVRNow() {
+    console.log('[enterVRNow] called, titleStage=', store.state.titleStage, 'hasSave=', store.state.hasSave);
     if (store.state.titleStage) {
+      console.log('[enterVRNow] 走 startFromTitle 路径');
       this.startFromTitle(!store.state.hasSave);
       setTimeout(() => void this.vrSys.enter(), 1200);
     } else {
+      console.log('[enterVRNow] 直接进 vrSys.enter()');
       void this.vrSys.enter();
     }
   }
