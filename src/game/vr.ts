@@ -495,12 +495,9 @@ export class VRSystem {
       r.setPixelRatio(Math.min(0.65, this.savedPixelRatio));
 
       this.savedFar = this.host.camera.far;
-
-      // this.host.camera.far 不动
-
+      this.host.camera.far = 40; // VR 砍远裁剪到 40m：雾不动，用户偏好
       const fog = this.host.scene.fog as THREE.Fog | null;
-
-      if (fog) { this.savedFog = [fog.near, fog.far]; } // 雾也保持不变
+      if (fog) { this.savedFog = [fog.near, fog.far]; } // 雾保留不变
 
       await r.xr.setSession(session);
 
