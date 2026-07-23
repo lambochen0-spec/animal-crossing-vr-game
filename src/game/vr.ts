@@ -57,12 +57,12 @@ export class MarchDetector {
       this.peaked = false;
       this.peakOsc = 0;
     } else {
-      // 抬过 +1.8cm 再回落到峰值 1/4 = 一步候选（提前确认，起步更快；峰值过滤微抖）
-      if (!this.peaked && osc > 0.018 && this.prevOsc <= osc) { this.peaked = true; this.peakOsc = osc; }
+      // 抬过 +0.8cm 再回落到峰值 1/4 = 一步候选（降低门槛适配 Quest 头显晃动幅度）
+      if (!this.peaked && osc > 0.008 && this.prevOsc <= osc) { this.peaked = true; this.peakOsc = osc; }
       if (this.peaked) this.peakOsc = Math.max(this.peakOsc, osc);
       if (this.peaked && osc < this.peakOsc * 0.25) {
         this.peaked = false;
-        const valid = this.peakOsc > 0.02; // 峰值至少 2cm 才算一步（小于此为晃头/重心微移）
+        const valid = this.peakOsc > 0.01; // 峰值至少 1cm 算一步（原2cm，Quest头显重晃动小）
         this.peakOsc = 0;
         if (valid) {
           const iv = t - this.lastStepAt;
