@@ -41,14 +41,11 @@ export class MarchDetector {
   private lastStepAt = 0;
   private goodIv = 0;       // 有效步频间隔（EMA）
   private rhythm = 0;       // 连续符合节奏的步数
-  private tiltCd = 0;       // 低头/抬头后的检测冷却
   speed = 0;                // 平滑后的目标速度（米/秒）
   running = false;
 
-  // headY 上下起伏 / headX 左右摆动；pitch：头部俯仰角——低头看手腕/抬头看天时暂停计步
-  update(headY: number, headX: number, t: number, dt: number, pitch = 0) {
-    if (Math.abs(pitch) > 0.5) this.tiltCd = 0.3;
-    else this.tiltCd = Math.max(0, this.tiltCd - dt);
+  // headY 上下起伏 / headX 左右摆动；pitch 检测已移除——用户看手腕手机/抬头看天不应冻结移动
+  update(headY: number, headX: number, t: number, dt: number, _pitch = 0) {
     const vals = [headY, headX];
     let maxOsc = 0;
     for (let ci = 0; ci < 2; ci++) {
@@ -58,10 +55,7 @@ export class MarchDetector {
       c.base += (v - c.base) * Math.min(1, dt * 0.8);
       const osc = v - c.base;
       maxOsc = Math.max(maxOsc, Math.abs(osc));
-      if (this.tiltCd > 0) {
-        c.peaked = false;
-        c.peakOsc = 0;
-      } else {
+      {
         // 抬过 +0.3cm 再回落到峰值 1/4 = 一步候选（Pico Neo 3 跑步实际颠 0.5~1.5cm，
         // 扣基线跟踪/IMU 误差后剩 4~4.5mm；给 2mm 余量。3mm 仍高于 IMU 垂直轴噪声 < 1.5mm 3σ）
         if (!c.peaked && osc > 0.003 && c.prevOsc <= osc) { c.peaked = true; c.peakOsc = osc; }
@@ -380,8 +374,7 @@ export class VRSystem {
     this.headLocalXBase += (camera.position.x - this.headLocalXBase) * Math.min(1, dt * 0.05);
     const headLocalX = camera.position.x - this.headLocalXBase;
     // 原地踏步 → 移动（头部上下+左右双通道检测；低头/抬头时暂停防误走）
-    const headPitch = Math.asin(THREE.MathUtils.clamp(this.tmpV.y, -1, 1));
-    this.march.update(headWorldY, headLocalX, now / 1000, dt, headPitch);
+    this.march.update(headWorldY, headLocalX, now / 1000, dt);
     this.applyLocomotion(viewYaw, dt);
     // 手柄按键（摇杆快速转向 + A/B 切工具）
     this.pollGamepads(dt);
