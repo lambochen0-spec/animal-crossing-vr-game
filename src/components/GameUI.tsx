@@ -176,22 +176,12 @@ export function GameUI() {
         </div>
       )}
 
-// [debug] 实时显示 store 状态，让你知道是不是 vrActive 卡 true
-      <div className="pointer-events-none absolute top-1 left-2 text-[10px] text-black/80 bg-white/70 px-1.5 py-0.5 rounded font-mono">
-        vrA={String(hud.vrActive)} vrSup={String(hud.vrSupported)} tit={hud.titleStage ?? 'null'}
-      </div>
-
-      {/* VR 入口：检测到 VR 设备时显示 */}
-      {hud.vrSupported && !hud.vrActive && hud.titleStage === null && (
+{/* VR 入口：游戏进行中即可进入（右下角避开任务面板遮挡） */}
+{hud.vrSupported && !hud.vrActive && hud.titleStage === null && (
         <button
-          onClick={() => {
-                      // 1) 立刻弹 toast 让你知道按钮真被点了（不依赖 enterVRNow/commands）
-                      store.patch({ toast: { title: '正在进入 VR', icon: '🥽', desc: '请接受头显授权' } });
-                      // 2) 再走命令队列进 VR
-                      commands.push({ type: 'enterVR' });
-                    }}
-          className="pointer-events-auto absolute bottom-4 right-3 z-[100] rounded-2xl bg-indigo-600 text-white font-bold px-4 py-2.5 shadow-lg ring-2 ring-yellow-400"
-        >
+                  onClick={() => commands.push({ type: 'enterVR' })}
+                  className="pointer-events-auto absolute bottom-4 right-3 z-[100] rounded-2xl bg-indigo-600 text-white font-bold px-4 py-2.5 shadow-lg"
+                >
           🥽 进入 VR
         </button>
       )}
