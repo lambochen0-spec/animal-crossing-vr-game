@@ -70,7 +70,6 @@ export class MarchDetector {
     const dx = headX - this.ox;
     const dz = headZ - this.oz;
     const dist = Math.sqrt(dx * dx + dz * dz);
-    if (this.stepTs.length === 0) console.log(`[March] o=(${this.ox.toFixed(3)},${this.oz.toFixed(3)}) h=(${headX.toFixed(3)},${headZ.toFixed(3)}) dist=${dist.toFixed(4)} moving=${this.moving} peak=${this.peakDist.toFixed(4)}`);
 
     if (dist > this.peakDist) this.peakDist = dist;
 
@@ -79,7 +78,6 @@ export class MarchDetector {
       if (dist < 0.02) {
         // 回到原点 → 记一步（峰值至少 3cm 才算有效）
         if (this.peakDist >= 0.03) {
-          console.log(`[March] ✅ STEP! peak=${this.peakDist.toFixed(4)} origin reset to (${headX.toFixed(3)},${headZ.toFixed(3)})`);
           this.stepTs.push(t);
           if (this.stepTs.length > 8) this.stepTs.shift();
         }
