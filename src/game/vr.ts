@@ -109,7 +109,7 @@ export class MarchDetector {
 
       // 相位增长 → 朝波峰走 → 累计 movement（Babylon 的 0.024 × Δt）
       if (dPhase > 0.005) {
-        this.movement += 0.024 * dPhase;
+        this.movement += 0.6 * dPhase;
       }
 
       // 相位大幅下降 → 完成半个周期，重置相位追踪
