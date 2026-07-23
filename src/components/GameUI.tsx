@@ -190,7 +190,7 @@ export function GameUI() {
                       // 2) 再走命令队列进 VR
                       commands.push({ type: 'enterVR' });
                     }}
-          className="pointer-events-auto absolute top-16 right-3 rounded-2xl bg-indigo-600/90 text-white font-bold px-4 py-2.5 shadow-lg hover:bg-indigo-500"
+          className="pointer-events-auto absolute bottom-4 right-3 z-[100] rounded-2xl bg-indigo-600 text-white font-bold px-4 py-2.5 shadow-lg ring-2 ring-yellow-400"
         >
           🥽 进入 VR
         </button>
