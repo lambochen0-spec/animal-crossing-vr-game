@@ -250,8 +250,9 @@ export class VRSystem {
       const fog = this.host.scene.fog as THREE.Fog | null;
       if (fog) { this.savedFog = [fog.near, fog.far]; fog.near = 8; fog.far = 32; }
       await r.xr.setSession(session);
-      // 固定注视点渲染：视野边缘降分辨率（省像素，转头黑边区域正受益）
-      (r.xr as unknown as { setFoveation?: (f: number) => void }).setFoveation?.(1);
+      // 固定注视点渲染：周边自然模糊（0=无, 1=中, 2=强, 3=最强）。VR 转头时周边本来就会糊，
+      // foveation 把这种"转头边缘糊"做成视觉默认状态——动态降低中心分辨率感觉就不明显。
+      (r.xr as unknown as { setFoveation?: (f: number) => void }).setFoveation?.(2);
       this.setupScene();
       this.host.onVRStart();
       session.addEventListener('end', () => this.teardown());
@@ -363,19 +364,33 @@ export class VRSystem {
   update(dt: number, now: number) {
     if (!this.active) return;
     const { camera } = this.host;
-    // 动态分辨率：平均帧时间过长就继续降像素比，宽裕则回升（0.4~0.8 之间浮动）
+    // 动态分辨率：按"用户移动速度"为主信号（用户体感的延迟来自"画面跟不上运动"，
+    // 站着不动时帧率再差也没事，跑动时才需要降像素比防闪烁），帧时间为辅助兜底。
+    // 速度档位（march.speed 范围 0~3.8 m/s）：
+    //   < 0.3 m/s  几乎不动 → 0.65 满画质
+    //   0.3~1.0    慢走     → 0.55
+    //   1.0~2.5    快走     → 0.45
+    //   > 2.5      跑步     → 0.35
+    // 帧时间兜底：avg > 40ms 强制降到 0.3；avg < 14ms 允许小幅回升
+    const userSpeed = this.march.speed;
+    let targetPR = 0.65;
+    if (userSpeed > 2.5) targetPR = 0.35;
+    else if (userSpeed > 1.0) targetPR = 0.45;
+    else if (userSpeed > 0.3) targetPR = 0.55;
+    // 帧时间兜底（每 2 秒采样一次，10 帧平均）
     this.drAcc += dt; this.drN++; this.drCd -= dt;
     if (this.drCd <= 0 && this.drN > 10) {
       const avg = this.drAcc / this.drN;
       this.drAcc = 0; this.drN = 0; this.drCd = 2;
       this.lastAvgMs = avg * 1000;
-      if (avg > 0.020 && this.curPR > 0.4) {
-        this.curPR = Math.max(0.4, this.curPR - 0.1);
-        this.host.renderer.setPixelRatio(this.curPR);
-      } else if (avg < 0.014 && this.curPR < 0.8) {
-        this.curPR = Math.min(0.8, this.curPR + 0.05);
-        this.host.renderer.setPixelRatio(this.curPR);
-      }
+      if (avg > 0.040) targetPR = Math.min(targetPR, 0.3); // 兜底：50ms 强制降到 0.3
+      else if (avg < 0.014) targetPR = Math.min(0.65, targetPR + 0.05); // 帧宽裕小幅回升
+    }
+    // 阶梯式切换像素比：每帧采样目标值，但只在差超过 0.05 时才更新，避免 setPixelRatio 频繁调用
+    // + 非整数像素比造成 GPU texture 重分配抖动
+    if (Math.abs(targetPR - this.curPR) > 0.05) {
+      this.curPR = targetPR;
+      this.host.renderer.setPixelRatio(this.curPR);
     }
     // 世界视线朝向 → 同步给游戏（移动方向/交互判定都靠它）
     camera.getWorldDirection(this.tmpV);
