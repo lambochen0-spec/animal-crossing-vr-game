@@ -97,10 +97,11 @@ export class MarchDetector {
         this.peakDist = 0;
       }
     } else {
-      // 静止中 → 检测远离原点（低门槛 2cm）
+      // 静止中 → 检测远离原点（低门槛 2cm），把当前位置设为新原点
       if (dist >= 0.02) {
+        this.ox = headX; this.oz = headZ;  // ← 关键修复：开始摆动时重置原点
         this.moving = true;
-        this.peakDist = dist;
+        this.peakDist = 0;                  // 从新原点重新算波峰
       }
     }
 
