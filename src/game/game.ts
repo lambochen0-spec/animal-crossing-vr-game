@@ -3141,7 +3141,8 @@ export class Game {
   private slowFrames = 0;
   private lowQuality = false;
 
-  private loop = () => {
+  // Three.js setAnimationLoop 传入 (time, frame)，frame 是 XRFrame（仅在 VR 中非 null）
+  private loop = (_time: number, xrFrame?: XRFrame) => {
     if (this.disposed) return;
     const now = performance.now();
     let dt = (now - this.lastT) / 1000;
@@ -3172,7 +3173,7 @@ export class Game {
     // 跨天检测：露营考察者到达/离开
     const today = this.dayStamp();
     if (today !== this.lastDayTick) { this.lastDayTick = today; this.updateCamp(); }
-    if (this.vrSys.active) this.vrSys.update(dt, now); // VR：踏步移动/挥臂/面板（会写入 touchInput 与 camYaw）
+    if (this.vrSys.active) this.vrSys.update(dt, now, xrFrame); // VR：踏步移动/挥臂/面板（会写入 touchInput 与 camYaw）
     this.updatePlayer(dt);
     if (this.vrSys.active) this.vrSys.syncRigPosition(); // 同步 rig 到最新 playerPos，消除帧滞后
     this.updateBoat(dt);
