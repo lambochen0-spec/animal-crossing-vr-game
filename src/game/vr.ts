@@ -39,10 +39,11 @@ export class MarchDetector {
   private sampleT = 0;
 
   // 原点 + 摆动状态
-  private ox = 0; private oz = 0;    // 固定原点（头"静止"时的位置）
+  private ox = 0; private oz = 0;
   private originSet = false;
-  private moving = false;             // 正在远离原点
-  private peakDist = 0;               // 本次摆动已达到的最大距离
+  private moving = false;
+  private peakDist = 0;
+  private idleFrames = 0;   // 连续"静止"帧数，用来重置原点
 
   private stepTs: number[] = [];      // 步时间戳
 
@@ -71,27 +72,35 @@ export class MarchDetector {
     const dz = headZ - this.oz;
     const dist = Math.sqrt(dx * dx + dz * dz);
 
-    // 记录本次摆动达到的最大距离
     if (dist > this.peakDist) this.peakDist = dist;
 
     if (this.moving) {
       // 正在摆动中 → 检测是否回到了原点附近
-      if (dist < 0.03) {
-        // 回到原点 → 记一步（峰值至少 6cm 才算有效步伐）
-        if (this.peakDist >= 0.06) {
+      if (dist < 0.02) {
+        // 回到原点 → 记一步（峰值至少 3cm 才算有效）
+        if (this.peakDist >= 0.03) {
           this.stepTs.push(t);
           if (this.stepTs.length > 8) this.stepTs.shift();
         }
-        // 重置原点、等待下一次摆动
+        // 重置
         this.ox = headX; this.oz = headZ;
         this.moving = false;
         this.peakDist = 0;
+        this.idleFrames = 0;
       }
     } else {
-      // 静止中 → 检测是否开始远离原点
-      if (dist >= 0.05) {
+      // 静止中 → 检测远离原点（低门槛 2cm）
+      if (dist >= 0.02) {
         this.moving = true;
         this.peakDist = dist;
+        this.idleFrames = 0;
+      } else {
+        this.idleFrames++;
+        // 连续 30 帧都静止（约 1 秒），重置原点跟随轻微漂移
+        if (this.idleFrames > 30) {
+          this.ox = headX; this.oz = headZ;
+          this.idleFrames = 0;
+        }
       }
     }
 
