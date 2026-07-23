@@ -176,6 +176,11 @@ export function GameUI() {
         </div>
       )}
 
+// [debug] 实时显示 store 状态，让你知道是不是 vrActive 卡 true
+      <div className="pointer-events-none absolute top-1 left-2 text-[10px] text-black/80 bg-white/70 px-1.5 py-0.5 rounded font-mono">
+        vrA={String(hud.vrActive)} vrSup={String(hud.vrSupported)} tit={hud.titleStage ?? 'null'}
+      </div>
+
       {/* VR 入口：检测到 VR 设备时显示 */}
       {hud.vrSupported && !hud.vrActive && (!hud.titleStage || hud.titleStage === 'menu') && (
         <button
