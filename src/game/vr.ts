@@ -89,7 +89,7 @@ export class MarchDetector {
     this.amp = Math.max(Math.abs(osc), this.amp * Math.pow(0.5, dt / 0.2));
     // 只保留跑步档：第一步低速起步，第二步确认节奏后提全速；步幅最高 3.8 米/秒
     let target = 0;
-    if (this.rhythm >= 1 && t - this.lastStepAt < 1.2) {
+    if (this.rhythm >= 1 && t - this.lastStepAt < 1.5) {
       if (this.goodIv === 0) {
         target = 0.9; // 第一步：缓冲低速，第二步确认后提速
       } else {
@@ -97,6 +97,9 @@ export class MarchDetector {
         if (hz >= 2.0) {
           target = this.rhythm >= 2 ? Math.min(3.8, 0.8 + (hz - 2.0) * 2.0) : 1.2;
           this.running = hz >= 2.6;
+        } else if (hz >= 0.6) {
+          target = 0.5 + (hz - 0.6) * 0.5;
+          this.running = false;
         }
       }
     } else this.running = false;
