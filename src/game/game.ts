@@ -4249,22 +4249,10 @@ export class Game {
       const starTotal = this.stars.geometry.attributes.position.count;
       this.stars.geometry.setDrawRange(0, vr ? Math.floor(starTotal / 3) : starTotal);
       for (const c of this.clouds) c.visible = !vr;
-      this.sunDisc.scale.setScalar(vr ? 0.31 : 1);
-      this.sunGlow.scale.setScalar(vr ? 0.31 : 1);
-      this.moonDisc.scale.setScalar(vr ? 0.31 : 1);
-      // 太阳：6 点升起、18 点落下（位置跟着玩家，永远可见于天际）
-      const sunShow = sy > -0.12 && !rain;
-      this.sunDisc.visible = this.sunGlow.visible = sunShow;
-      if (sunShow) {
-        const ax = px + sx * 170 * ck, ay = Math.max(6, sy * 150 * ck), az = pz + 120 * ck;
-        this.sunDisc.position.set(ax, ay, az);
-        this.sunGlow.position.set(ax, ay, az - 1);
-        this.sunDisc.lookAt(this.camera.position);
-        this.sunGlow.lookAt(this.camera.position);
-        // 日出日落时太阳更橙
-        const low = Math.max(0, 1 - sy * 2.2);
-        (this.sunDisc.material as THREE.MeshBasicMaterial).color.setHex(0xffdf5a).lerp(new THREE.Color(0xff8a3a), low);
-      }
+            this.moonDisc.scale.setScalar(vr ? 0.31 : 1);
+      // 太阳永久隐藏（用户反馈太丑）：moonGlow/sunDisc 仍占可见性字段，后续可一键恢复
+      this.sunDisc.visible = false;
+      this.sunGlow.visible = false;
       // 满月：18 点升起、6 点落下
       const moonA = (((t + 6) % 24) / 24) * Math.PI * 2;
       const my = Math.sin(moonA);
