@@ -29,93 +29,110 @@ export interface VRHost {
   getMapMarkers(): { name: string; x: number; z: number; color: string }[]; // 宝可梦实时位置（手机地图页）
 }
 
-// ================= 原地踏步检测 =================
-// 原理：原地跑步时头部「上下 + 左右」复合摆动，两个轴向各跑一套「抬峰-回落」检测，
-// 任一通道检出一步即计步；两通道共享节奏/步频（谐波过滤防止侧摆半频拖乱主节奏）
+// ================= 原地踏步检测（Godot XR Tools jog-in-place 算法移植）================
+// 原理：取左右手柄的 Y 速度（位置差分），跑步时两手反相关摆动，乘积出一个
+// 带 confidence 峰/谷的信号；检测峰→谷→峰间隔，得出 stroke 频率 Hz；
+// 频率 ≥ 慢跑门槛 → 0.9 m/s；≥ 快跑门槛 → 3.0 m/s。完全不用头部位置，
+// 适配 Pico/Quest/任何头显——手柄 IMU 速度信号天然有 1~5 m/s 振幅。
+// 参考：GodotXR-tools/addons/godot-xr-tools/functions/movement_jog.gd
 export class MarchDetector {
-  private ch = [
-    { base: 0, init: false, prevOsc: 0, peaked: false, peakOsc: 0 }, // 通道0：上下（headY）
-    { base: 0, init: false, prevOsc: 0, peaked: false, peakOsc: 0 }, // 通道1：左右（headX，rig 局部坐标）
-  ];
-  private amp = 0;          // 起伏振幅包络（快速停步检测）
-  private lastStepAt = 0;
-  private goodIv = 0;       // 有效步频间隔（EMA）
-  private rhythm = 0;       // 连续符合节奏的步数
+  // 慢跑触发频率（Hz）—— Godot 默认 3.5，这里降到 2.5 让"小步慢颠"也能起步
+  static SLOW_FREQ = 2.5;
+  // 快跑触发频率（Hz）—— Godot 默认 5.5，这里降到 3.5（Pico 手臂摆动通常 2.5~4 Hz）
+  static FAST_FREQ = 3.5;
+  // confidence 门槛（无量纲，speed²）—— 信号低于此视为未跑
+  static CONF_THRESH = 0.4;
+
+  // 双手柄 Y 速度 EMA（指数移动平均，避免噪声）
+  private leftVy = 0; private rightVy = 0;
+  // confidence 信号（peak 检测）
+  private confHat = 0;
+  // stroke 持续时间累加
+  private currentStroke = 0;
+  // 上一个完整 stroke 持续时间（用于算 Hz）
+  private lastStroke = 0;
+  // 上一次手柄位置（用于差分算速度）
+  private prevLeftPos: THREE.Vector3 | null = null;
+  private prevRightPos: THREE.Vector3 | null = null;
+  // 上一帧步频Hz（输出用）
+  private strokeHz = 0;
+
   speed = 0;                // 平滑后的目标速度（米/秒）
   running = false;
 
-  // headY 上下起伏 / headX 左右摆动；pitch 检测已移除——用户看手腕手机/抬头看天不应冻结移动
-  update(headY: number, headX: number, t: number, dt: number, _pitch = 0) {
-    const vals = [headY, headX];
-    let maxOsc = 0;
-    for (let ci = 0; ci < 2; ci++) {
-      const c = this.ch[ci];
-      const v = vals[ci];
-      if (!c.init) { c.base = v; c.init = true; }
-      c.base += (v - c.base) * Math.min(1, dt * 0.8);
-      const osc = v - c.base;
-      maxOsc = Math.max(maxOsc, Math.abs(osc));
-      {
-        // 抬过 +0.3cm 再回落到峰值 1/4 = 一步候选（Pico Neo 3 跑步实际颠 0.5~1.5cm，
-        // 扣基线跟踪/IMU 误差后剩 4~4.5mm；给 2mm 余量。3mm 仍高于 IMU 垂直轴噪声 < 1.5mm 3σ）
-        if (!c.peaked && osc > 0.003 && c.prevOsc <= osc) { c.peaked = true; c.peakOsc = osc; }
-        if (c.peaked) c.peakOsc = Math.max(c.peakOsc, osc);
-        if (c.peaked && osc < c.peakOsc * 0.25) {
-          c.peaked = false;
-          const valid = c.peakOsc > 0.003; // 峰值至少 3mm 才算一步（原 1.2cm 太严）
-          c.peakOsc = 0;
-          if (valid) this.step(t);
-        }
-      }
-      c.prevOsc = osc;
+  // left/right: 当前帧两个手柄的世界位置对象；t: 当前时间秒；dt: 帧间隔秒
+  update(leftPos: THREE.Vector3, rightPos: THREE.Vector3, t: number, dt: number, _pitch = 0) {
+    // 1. 计算左右手柄 Y 速度（位置差分）
+    if (this.prevLeftPos && this.prevRightPos && dt > 0) {
+      const leftVy = (leftPos.y - this.prevLeftPos.y) / dt;
+      const rightVy = (rightPos.y - this.prevRightPos.y) / dt;
+      // EMA 平滑（α ≈ 0.5 —— 跑动时 1 帧基本到位）
+      this.leftVy = this.leftVy + (leftVy - this.leftVy) * Math.min(1, dt * 8);
+      this.rightVy = this.rightVy + (rightVy - this.rightVy) * Math.min(1, dt * 8);
     }
-    // 振幅包络：停步后起伏立刻消失，0.2s 半衰期 → 停步延迟与步频解耦
-    this.amp = Math.max(maxOsc, this.amp * Math.pow(0.5, dt / 0.2));
-    // 停步 1.2s 后节奏清零（下次从头起步）
-    if (t - this.lastStepAt > 1.2) this.rhythm = 0;
-    // 振幅驱动：头在持续晃动（amp 维持）+ 至少检出过一步 = 走；步频只决定档位。
-    // 不再依赖"连续节奏"——真机噪声下节奏计数会断，导致走走停停
+    this.prevLeftPos = leftPos.clone();
+    this.prevRightPos = rightPos.clone();
+
+    // 2. confidence 信号 = 左 Y 速度 × -右 Y 速度（反相关 → 跑步时出正峰）
+    const conf = this.leftVy * -this.rightVy;
+
+    // 3. valley 检测 + confidence-hat 更新（快升慢降）
+    const valley = conf < this.confHat;
+    if (valley) {
+      // valley 中慢慢泄
+      this.confHat = this.confHat + (0 - this.confHat) * Math.min(1, dt * 2);
+    } else {
+      // 峰时快速升
+      this.confHat = this.confHat + (conf - this.confHat) * Math.min(1, dt * 20);
+    }
+
+    // 4. confidence 不足 → 用户没跑
+    if (this.confHat < MarchDetector.CONF_THRESH) {
+      this.currentStroke = 0;
+      this.lastStroke = 0;
+      this.strokeHz = 0;
+      this.running = false;
+      this.speed += (0 - this.speed) * Math.min(1, dt * 24);
+      if (this.speed < 0.05) this.speed = 0;
+      return;
+    }
+
+    // 5. 跟踪 stroke 持续时间（peak → valley → peak 一次）
+    if (valley) {
+      this.currentStroke += dt;
+    } else if (this.currentStroke > 0.1) {
+      this.lastStroke = this.currentStroke;
+      this.currentStroke = 0;
+    }
+
+    // 6. 还没出过一次完整 stroke → 0Hz
+    if (this.lastStroke < 0.1) {
+      this.strokeHz = 0;
+    } else {
+      this.strokeHz = 1.0 / this.lastStroke;
+    }
+
+    // 7. stroke 超过 0.75s（< 1.33Hz）→ 用户已停，强制归零
+    if (this.currentStroke > 0.75) {
+      this.strokeHz = 0;
+    }
+
+    // 8. 根据 Hz 决定目标速度（用 0.9 m/s 慢跑起步，避免一开始冲出去）
+    const hz = this.strokeHz;
     let target = 0;
-    // amp 在 2.6Hz 步频下谷底会衰减到峰值的 52%（5mm→2.6mm），原 0.004 会在每步谷底断裂
-    if (this.rhythm >= 1 && this.amp > 0.002) {
-      if (this.goodIv === 0) {
-        target = 0.9; // 第一步：缓冲低速，第二步确认步频后提档
-      } else {
-        const hz = 1 / this.goodIv;
-        if (hz >= 2.0) target = Math.min(3.8, 0.8 + (hz - 2.0) * 2.0); // 步幅最高 3.8 米/秒
-      }
-      this.running = this.goodIv !== 0 && 1 / this.goodIv >= 2.2;
-    } else this.running = false;
-    // 快速启停（起步/停步都要跟脚）
+    if (hz >= MarchDetector.SLOW_FREQ) {
+      // 线性映射：SLOW_FREQ→0.9 m/s，FAST_FREQ→3.0 m/s
+      const ratio = Math.min(1, (hz - MarchDetector.SLOW_FREQ) / (MarchDetector.FAST_FREQ - MarchDetector.SLOW_FREQ));
+      target = 0.9 + ratio * (3.0 - 0.9);
+    } else {
+      target = 0;
+    }
+    this.running = hz >= MarchDetector.FAST_FREQ;
+
+    // 9. 平滑到目标速度（快速启停）
     const k = target > this.speed ? 12 : 24;
     this.speed += (target - this.speed) * Math.min(1, dt * k);
     if (this.speed < 0.05) this.speed = 0;
-  }
-
-  // 任一通道检出一步 → 统一节奏判定（iv<0.25 抖动忽略；谐波/半频步不干扰主节奏）
-  private step(t: number) {
-    const iv = t - this.lastStepAt;
-    if (this.lastStepAt === 0) {
-      // 全局第一步：建立起点（否则第一个 0.2s 的步会被误判为抖动）
-      this.lastStepAt = t;
-      this.rhythm = 1;
-      this.goodIv = 0;
-      return;
-    }
-    if (iv < 0.25) return; // 高频抖动，完全忽略（不刷新计时）
-    if (this.goodIv !== 0 && (iv > this.goodIv * 1.6 || iv < this.goodIv * 0.6)) {
-      return; // 另一通道的半频/倍频（侧摆周期≠步频），忽略以免拖乱节奏
-    }
-    if (iv <= 0.9) {
-      this.lastStepAt = t;
-      this.rhythm = Math.min(4, this.rhythm + 1);
-      this.goodIv = this.goodIv === 0 ? iv : this.goodIv + (iv - this.goodIv) * 0.6;
-    } else if (this.rhythm < 2) {
-      this.lastStepAt = t;
-      this.rhythm = 1;  // 第一步：允许低速起步
-      this.goodIv = 0;  // 步频未知，待第二步确认
-    }
-    // iv>0.9 且已有稳定节奏：散步，忽略（防另一通道拖断节奏；停步由 amp/超时处理）
   }
 }
 
@@ -340,9 +357,9 @@ export class VRSystem {
   // ---------------- 每帧更新（由 Game 主循环调用）----------------
   private drAcc = 0; private drN = 0; private drCd = 0; private curPR = 0.65;
   private lastAvgMs = 0; // 最近平均帧时间（左腕状态页显示用）
-  // 头部世界 Y 慢跟踪基线 + rig 局部 headX 基线（修 ❶：camera 在 rig 里 position 恒 0，原代码用 camera.position.y/x 永远 ~0，Pico 跑步时根本检测不到）
-  private headWorldY = 0; private headWorldYBase = 0; private headWorldYInit = false;
-  private headLocalXBase = 0; private headLocalXInit = false;
+  // 跑步检测改用双手柄 Y 速度反相关（Godot 算法移植），不再用头部位置
+  private leftHandPos = new THREE.Vector3();
+  private rightHandPos = new THREE.Vector3();
   update(dt: number, now: number) {
     if (!this.active) return;
     const { camera } = this.host;
@@ -364,17 +381,10 @@ export class VRSystem {
     camera.getWorldDirection(this.tmpV);
     const viewYaw = Math.atan2(-this.tmpV.x, -this.tmpV.z);
     this.host.setViewYaw(viewYaw);
-    // 头部世界 Y（跑步时上下颠的真实距离）+ rig 局部 headX（左右摆：站直时 camera.position.x~0，歪头会偏）
-    camera.getWorldPosition(this.tmpA);
-    if (!this.headWorldYInit) { this.headWorldYBase = this.tmpA.y; this.headWorldYInit = true; }
-    // 慢跟踪基线（~0.05/s，几乎不动），避免吃掉跑步时的 1~2cm 颠簸本身（原 0.8/s 把信号吃光）
-    this.headWorldYBase += (this.tmpA.y - this.headWorldYBase) * Math.min(1, dt * 0.05);
-    const headWorldY = this.tmpA.y - this.headWorldYBase;
-    if (!this.headLocalXInit) { this.headLocalXBase = camera.position.x; this.headLocalXInit = true; }
-    this.headLocalXBase += (camera.position.x - this.headLocalXBase) * Math.min(1, dt * 0.05);
-    const headLocalX = camera.position.x - this.headLocalXBase;
-    // 原地踏步 → 移动（头部上下+左右双通道检测；低头/抬头时暂停防误走）
-    this.march.update(headWorldY, headLocalX, now / 1000, dt);
+    // 取双手柄当前世界位置 → 喂 MarchDetector（Godot 算法用左右手 Y 速度反相关）
+    if (this.controllers[0]) this.controllers[0].getWorldPosition(this.leftHandPos);
+    if (this.controllers[1]) this.controllers[1].getWorldPosition(this.rightHandPos);
+    this.march.update(this.leftHandPos, this.rightHandPos, now / 1000, dt);
     this.applyLocomotion(viewYaw, dt);
     // 手柄按键（摇杆快速转向 + A/B 切工具）
     this.pollGamepads(dt);
