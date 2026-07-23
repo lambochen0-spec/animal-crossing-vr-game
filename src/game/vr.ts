@@ -78,7 +78,7 @@ export class MarchDetector {
           const ad = Math.sqrt(ax * ax + az * az);
           if (ad > bestApex) { bestApex = ad; bestIdx = k; }
         }
-        if (bestApex >= 0.05) {
+        if (bestApex >= 0.09) {
           // 建立步态轴（起点→波峰方向）
           this.axisX = this.buf[bestIdx].x - origin.x;
           this.axisZ = this.buf[bestIdx].z - origin.z;
