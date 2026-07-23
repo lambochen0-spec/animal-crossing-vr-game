@@ -62,12 +62,12 @@ export class MarchDetector {
         c.peaked = false;
         c.peakOsc = 0;
       } else {
-        // 抬过 +1.8cm 再回落到峰值 1/4 = 一步候选（提前确认，起步更快；峰值过滤微抖）
-        if (!c.peaked && osc > 0.018 && c.prevOsc <= osc) { c.peaked = true; c.peakOsc = osc; }
+        // 抬过 +0.5cm 再回落到峰值 1/4 = 一步候选（Pico Neo 3 跑步实际颠 0.5~1.5cm，原 1.8cm 卡死）
+        if (!c.peaked && osc > 0.005 && c.prevOsc <= osc) { c.peaked = true; c.peakOsc = osc; }
         if (c.peaked) c.peakOsc = Math.max(c.peakOsc, osc);
         if (c.peaked && osc < c.peakOsc * 0.25) {
           c.peaked = false;
-          const valid = c.peakOsc > 0.012; // 峰值至少 1.2cm 才算一步
+          const valid = c.peakOsc > 0.003; // 峰值至少 3mm 才算一步（原 1.2cm 太严）
           c.peakOsc = 0;
           if (valid) this.step(t);
         }
@@ -81,7 +81,7 @@ export class MarchDetector {
     // 振幅驱动：头在持续晃动（amp 维持）+ 至少检出过一步 = 走；步频只决定档位。
     // 不再依赖"连续节奏"——真机噪声下节奏计数会断，导致走走停停
     let target = 0;
-    if (this.rhythm >= 1 && this.amp > 0.014) {
+    if (this.rhythm >= 1 && this.amp > 0.004) {
       if (this.goodIv === 0) {
         target = 0.9; // 第一步：缓冲低速，第二步确认步频后提档
       } else {
@@ -371,11 +371,11 @@ export class VRSystem {
     // 头部世界 Y（跑步时上下颠的真实距离）+ rig 局部 headX（左右摆：站直时 camera.position.x~0，歪头会偏）
     camera.getWorldPosition(this.tmpA);
     if (!this.headWorldYInit) { this.headWorldYBase = this.tmpA.y; this.headWorldYInit = true; }
-    // 慢跟踪基线（~0.8/s），过滤掉跑步时 1~3cm 步颠簸本身
-    this.headWorldYBase += (this.tmpA.y - this.headWorldYBase) * Math.min(1, dt * 0.8);
+    // 慢跟踪基线（~0.05/s，几乎不动），避免吃掉跑步时的 1~2cm 颠簸本身（原 0.8/s 把信号吃光）
+    this.headWorldYBase += (this.tmpA.y - this.headWorldYBase) * Math.min(1, dt * 0.05);
     const headWorldY = this.tmpA.y - this.headWorldYBase;
     if (!this.headLocalXInit) { this.headLocalXBase = camera.position.x; this.headLocalXInit = true; }
-    this.headLocalXBase += (camera.position.x - this.headLocalXBase) * Math.min(1, dt * 0.8);
+    this.headLocalXBase += (camera.position.x - this.headLocalXBase) * Math.min(1, dt * 0.05);
     const headLocalX = camera.position.x - this.headLocalXBase;
     // 原地踏步 → 移动（头部上下+左右双通道检测；低头/抬头时暂停防误走）
     const headPitch = Math.asin(THREE.MathUtils.clamp(this.tmpV.y, -1, 1));
