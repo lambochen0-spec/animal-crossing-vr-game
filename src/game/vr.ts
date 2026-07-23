@@ -28,82 +28,102 @@ export interface VRHost {
   onPointTalk(id: string): void;      // 手柄指着角色扣扳机 → 对话
 }
 
-// ================= 原地踏步检测 =================
-// 原理：原地踏步时头部会上下起伏，高通滤波后数「抬-落」周期
+// ================= 原地踏步检测（Babylon.js 水平振荡方案）=================
+// 原理：原地踏步时头部会在水平方向左右/前后摆动（重心转移），
+// 检测水平位置「离开→到达峰值→返回原点附近」这样一个周期 = 一步。
+// 水平摆动幅度远大于Quest头显的垂直晃动，识别更可靠。
 export class MarchDetector {
-  private base = -1;        // 头部高度基线（慢速EMA）
-  private prevOsc = 0;
-  private peaked = false;
-  private peakOsc = 0;
-  private amp = 0;          // 起伏振幅包络（快速停步检测）
-  private lastStepAt = 0;
-  private goodIv = 0;       // 有效步频间隔（EMA）
-  private rhythm = 0;       // 连续符合节奏的步数
-  private tiltCd = 0;       // 低头/抬头后的检测冷却
-  speed = 0;                // 平滑后的目标速度（米/秒）
+  // 环形缓冲区（20个采样点 @ 15 FPS ≈ 1.3秒窗口）
+  private buf: { x: number; z: number }[] = [];
+  private readonly MAX_N = 20;
+  private readonly SAMPLE_DT = 1 / 15;
+  private sampleT = 0;
+
+  // 步检测状态
+  private swingX = 0;           // 从原点算起的水平摆动
+  private swingZ = 0;
+  private crossUp = false;      // 过零上升（远离原点方向）
+  private prevSwing = 0;        // 前一次摆动幅度
+  private stepTs: number[] = []; // 最近8步的时间戳
+
+  // 速度输出
+  private smoothSpeed = 0;
+  speed = 0;
   running = false;
 
-  // 外部扰动（头显快速转动/点头摇头）→ 暂停计步，避免晃头被当成踏步导致场景抖动
-  disturb() { this.tiltCd = Math.max(this.tiltCd, 0.25); }
+  // 水平检测不受点头/摇头影响，无需disturb
+  disturb() {}
 
-  // pitch：头部俯仰角（弧度）——低头看手腕/抬头看天时暂停计步，避免误走
-  update(headY: number, t: number, dt: number, pitch = 0) {
-    if (Math.abs(pitch) > 0.5) this.tiltCd = 0.3;
-    else this.tiltCd = Math.max(0, this.tiltCd - dt);
-    if (this.base < 0) this.base = headY;
-    this.base += (headY - this.base) * Math.min(1, dt * 0.8);
-    const osc = headY - this.base;
-    if (this.tiltCd > 0) {
-      this.peaked = false;
-      this.peakOsc = 0;
+  update(headX: number, headZ: number, t: number, dt: number) {
+    // 固定15 FPS采样（跟Babylon一致）
+    this.sampleT += dt;
+    this.sampleT = Math.min(this.sampleT, this.SAMPLE_DT * 3); // 防跳帧
+    if (this.sampleT < this.SAMPLE_DT) return;
+    this.sampleT -= this.SAMPLE_DT;
+
+    this.buf.push({ x: headX, z: headZ });
+    if (this.buf.length > this.MAX_N) this.buf.shift();
+    if (this.buf.length < 6) return;
+
+    // ---- 计算摆动（相对短期中心5帧EMA） ----
+    let cx = 0, cz = 0;
+    const m = 5;
+    for (let i = 0; i < m; i++) {
+      const s = this.buf[this.buf.length - 1 - i];
+      cx += s.x; cz += s.z;
+    }
+    cx /= m; cz /= m;
+
+    const dx = headX - cx;
+    const dz = headZ - cz;
+    const swing = Math.sqrt(dx * dx + dz * dz);
+
+    // ---- 过零检测：摆动从增加到减少 = 一次峰值 ----
+    if (swing > 0.03) { // 至少3cm摆动才算有效
+      if (!this.crossUp && swing > this.prevSwing) {
+        this.crossUp = true;
+      } else if (this.crossUp && swing < this.prevSwing) {
+        // 到达峰值开始回落 → 记半步
+        this.crossUp = false;
+        if (swing >= 0.06) { // 峰值至少6cm才算有效步伐
+          this.stepTs.push(t);
+          if (this.stepTs.length > 8) this.stepTs.shift();
+        }
+      }
     } else {
-      // 抬过 +0.8cm 再回落到峰值 1/4 = 一步候选（降低门槛适配 Quest 头显晃动幅度）
-      if (!this.peaked && osc > 0.008 && this.prevOsc <= osc) { this.peaked = true; this.peakOsc = osc; }
-      if (this.peaked) this.peakOsc = Math.max(this.peakOsc, osc);
-      if (this.peaked && osc < this.peakOsc * 0.25) {
-        this.peaked = false;
-        const valid = this.peakOsc > 0.01; // 峰值至少 1cm 算一步（原2cm，Quest头显重晃动小）
-        this.peakOsc = 0;
-        if (valid) {
-          const iv = t - this.lastStepAt;
-          if (iv >= 0.25 && iv <= 1.5) {
-            this.lastStepAt = t;
-            this.rhythm = Math.min(4, this.rhythm + 1);
-            this.goodIv = this.goodIv === 0 ? iv : this.goodIv + (iv - this.goodIv) * 0.6;
-          } else if (iv > 1.5) {
-            this.lastStepAt = t;
-            this.rhythm = 1;  // 第一步：允许低速起步
-            this.goodIv = 0;  // 步频未知，待第二步确认
-          } else if (this.lastStepAt === 0) {
-            // 全局第一步：建立起点（否则第一个 0.2s 的步会被误判为抖动）
-            this.lastStepAt = t;
-            this.rhythm = 1;
-            this.goodIv = 0;
+      this.crossUp = false;
+    }
+    this.prevSwing = swing;
+
+    // ---- 步频 → 目标速度 ----
+    let target = 0;
+    if (this.stepTs.length >= 2) {
+      const span = this.stepTs[this.stepTs.length - 1] - this.stepTs[0];
+      const n = this.stepTs.length - 1;
+      if (span > 0) {
+        const avgIv = span / n;
+        if (avgIv > 0) {
+          const hz = 1 / avgIv; // 步频（步/秒）
+          if (hz >= 0.6) {
+            target = Math.min(3.0, 0.5 + hz * 0.6);
+            this.running = hz >= 2.2;
           }
-          // iv<0.25 = 高频抖动，完全忽略（不刷新计时）
         }
       }
     }
-    this.prevOsc = osc;
-    // 振幅包络：停步后起伏立刻消失，0.2s 半衰期 → 停步延迟与步频解耦
-    this.amp = Math.max(Math.abs(osc), this.amp * Math.pow(0.5, dt / 0.2));
-    // 只保留跑步档：第一步低速起步，第二步确认节奏后提全速；步幅最高 3.8 米/秒
-    let target = 0;
-    if (this.rhythm >= 1 && t - this.lastStepAt < 1.5) {
-      // 一步就动：第一步用默认步频0.8s算速度，后面用实际步频
-      const hz = this.goodIv === 0 ? 1.25 : 1 / this.goodIv;
-      if (hz >= 2.0) {
-        target = Math.min(3.8, 0.8 + (hz - 2.0) * 2.0);
-        this.running = hz >= 2.6;
-      } else if (hz >= 0.6) {
-        target = 0.5 + (hz - 0.6) * 0.5;
-        this.running = false;
-      }
-    } else this.running = false;
-    // 快速启停（起步/停步都要跟脚）
-    const k = target > this.speed ? 12 : 24;
-    this.speed += (target - this.speed) * Math.min(1, dt * k);
-    if (this.speed < 0.05) this.speed = 0;
+
+    // ---- 速度平滑（起步快、停步更快） ----
+    const k = target > this.smoothSpeed ? 10 : 20;
+    this.smoothSpeed += (target - this.smoothSpeed) * Math.min(1, dt * k);
+    if (this.smoothSpeed < 0.05) this.smoothSpeed = 0;
+    this.speed = this.smoothSpeed;
+
+    // 超过2秒没新步 → 清零
+    if (this.stepTs.length > 0 && t - this.stepTs[this.stepTs.length - 1] > 2) {
+      this.stepTs = [];
+      this.smoothSpeed = 0;
+      this.running = false;
+    }
   }
 }
 
@@ -359,7 +379,7 @@ export class VRSystem {
     }
     this.prevViewYaw = viewYaw;
     this.prevPitch = headPitch;
-    this.march.update(camera.position.y, now / 1000, dt, headPitch);
+    this.march.update(camera.position.x, camera.position.z, now / 1000, dt);
     this.applyLocomotion(viewYaw, dt);
     // 手柄按键（摇杆快速转向 + A/B 切工具）
     this.pollGamepads(dt);
