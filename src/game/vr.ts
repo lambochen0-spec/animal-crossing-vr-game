@@ -33,78 +33,131 @@ export interface VRHost {
 // 检测水平位置「离开→到达峰值→返回原点附近」这样一个周期 = 一步。
 // 水平摆动幅度远大于Quest头显的垂直晃动，识别更可靠。
 export class MarchDetector {
-  // 环形缓冲区（20个采样 @ 15 FPS ≈ 1.3秒窗口，跟Babylon一致）
+  // ---- 第一阶段：缓冲区扫描（检测第一步） ----
   private buf: { x: number; z: number }[] = [];
   private readonly SAMPLE_DT = 1 / 15;
   private sampleT = 0;
-
-  // 熵检测：防止随机晃头被当成踏步
   private entropy = 0;
+  private detecting = true; // true=阶段1, false=阶段2
+
+  // ---- 第二阶段：连续追踪（沿步态轴跟踪相位） ----
+  private axisX = 0; private axisZ = 0;  // 步态轴方向（归一化）
+  private apexDist = 0;                   // 波峰幅度
+  private phase = 0;                      // 0~1: 在轴上的位置
+  private prevPhase = -1;
+  private movingForward = false;          // 相位正在增长
+  private lastAxisReset = 0;              // 上次重置轴的时间
 
   private stepTs: number[] = [];
-
   private smoothSpeed = 0;
   speed = 0;
   running = false;
 
   private debugT = 0;
   private toastCb: ((msg: string) => void) | null = null;
-
   setToastCb(cb: (msg: string) => void) { this.toastCb = cb; }
 
   disturb() {}
 
-  update(headX: number, headZ: number, t: number, dt: number) {
-    // 固定 15 FPS 采样
-    this.sampleT += dt;
-    this.sampleT = Math.min(this.sampleT, this.SAMPLE_DT * 3);
-    if (this.sampleT < this.SAMPLE_DT) return;
-    this.sampleT -= this.SAMPLE_DT;
-
+  private detectStep(headX: number, headZ: number, t: number) {
     this.buf.push({ x: headX, z: headZ });
     if (this.buf.length > 20) this.buf.shift();
-    if (this.buf.length < 7) return;
+    if (this.buf.length < 7) return false;
 
-    // ---- 熵检测：连续两帧距离累积，过大则放弃（随机晃头 vs 稳定踏步） ----
     const origin = this.buf[0];
     const dx1 = origin.x - this.buf[1].x;
     const dz1 = origin.z - this.buf[1].z;
-    const d1 = Math.sqrt(dx1 * dx1 + dz1 * dz1);
-    this.entropy = this.entropy * 0.93 + d1;
-    if (this.entropy > 0.4) return;
+    this.entropy = this.entropy * 0.93 + Math.sqrt(dx1 * dx1 + dz1 * dz1);
+    if (this.entropy > 0.4) return false;
 
-    // ---- 扫描缓冲区：找"出去又回来"的完整摆动 ----
-    // 从第 1/3 处开始找回归点（跳过刚起动的几帧）
     const startIdx = Math.floor(this.buf.length / 3);
     for (let sameIdx = startIdx; sameIdx < this.buf.length; sameIdx++) {
       const dx = origin.x - this.buf[sameIdx].x;
       const dz = origin.z - this.buf[sameIdx].z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-
-      if (dist < 0.03) {
-        // 找到了一个"回归点"（距起点 < 3cm）
-        // 在起点和回归点之间找波峰
-        let apexDist = 0;
+      if (Math.sqrt(dx * dx + dz * dz) < 0.03) {
+        let bestApex = 0, bestIdx = -1;
         for (let k = 1; k < sameIdx; k++) {
           const ax = this.buf[k].x - origin.x;
           const az = this.buf[k].z - origin.z;
           const ad = Math.sqrt(ax * ax + az * az);
-          if (ad > apexDist) apexDist = ad;
+          if (ad > bestApex) { bestApex = ad; bestIdx = k; }
         }
-
-        // 波峰必须 >= 5cm（Babylon 的 9cm 是首次校准用的，连续检测用更低阈值）
-        if (apexDist >= 0.05) {
-          // 记一步
+        if (bestApex >= 0.05) {
+          // 第一步检测成功：记步 + 建立步态轴
           this.stepTs.push(t);
           if (this.stepTs.length > 8) this.stepTs.shift();
-          // 清除已处理的采样，避免重复检测同一摆动
+          // 计算步态轴（起点→波峰方向）
+          this.axisX = this.buf[bestIdx].x - origin.x;
+          this.axisZ = this.buf[bestIdx].z - origin.z;
+          const len = Math.sqrt(this.axisX * this.axisX + this.axisZ * this.axisZ);
+          if (len > 0.01) { this.axisX /= len; this.axisZ /= len; }
+          this.apexDist = bestApex;
+          this.phase = 1;
+          this.prevPhase = -1;
+          this.movingForward = true;
+          this.detecting = false;
+          this.lastAxisReset = t;
           this.buf.splice(0, sameIdx);
+          return true;
         }
-        break; // 一次只检测一个摆动
+      }
+    }
+    return false;
+  }
+
+  private trackStep(headX: number, headZ: number, t: number) {
+    // 沿步态轴投影当前位置
+    const proj = headX * this.axisX + headZ * this.axisZ;
+    // 算相位（0~1，从原点映射到波峰）
+    let rawPhase = 0;
+    if (this.apexDist > 0.01) {
+      rawPhase = Math.abs(proj) / this.apexDist;
+    }
+    // 判断运动方向：相位是否在增长
+    if (this.prevPhase >= 0) {
+      const dPhase = rawPhase - this.prevPhase;
+
+      // 相位在增长 → 朝波峰走 → 产生移动
+      if (dPhase > 0.005) {
+        this.movingForward = true;
+        this.stepTs.push(t);
+        if (this.stepTs.length > 8) this.stepTs.shift();
+        // 穿越中点（0.5）时记一步
+        if (this.prevPhase < 0.5 && rawPhase >= 0.5) {
+          // 额外的半步标记（可选）
+        }
+      }
+
+      // 相位大幅下降 → 完成了半周期，重置
+      if (dPhase < -0.15) {
+        this.phase = 0;
+        this.prevPhase = -1;
       }
     }
 
-    // ---- 步频 → 速度（第一步就动） ----
+    this.phase = rawPhase;
+    this.prevPhase = rawPhase;
+
+    // 超过2秒没新步 → 回到阶段1重新校准
+    if (t - this.lastAxisReset > 2) {
+      this.detecting = true;
+      this.entropy = 0;
+      this.buf = [];
+    }
+  }
+
+  update(headX: number, headZ: number, t: number, dt: number) {
+    this.sampleT += dt;
+    if (this.sampleT < this.SAMPLE_DT) return;
+    this.sampleT -= this.SAMPLE_DT;
+
+    if (this.detecting) {
+      this.detectStep(headX, headZ, t);
+    } else {
+      this.trackStep(headX, headZ, t);
+    }
+
+    // 计算速度
     let target = 0;
     if (this.stepTs.length >= 1) {
       const hz = this.stepTs.length >= 2
@@ -115,26 +168,16 @@ export class MarchDetector {
         this.running = hz >= 2.2;
       }
     }
-
-    // 速度平滑
     const k = target > this.smoothSpeed ? 10 : 20;
     this.smoothSpeed += (target - this.smoothSpeed) * Math.min(1, dt * k);
     if (this.smoothSpeed < 0.05) this.smoothSpeed = 0;
     this.speed = this.smoothSpeed;
 
-    // 调试 toast：每 0.5s 显示一次
+    // 调试
     this.debugT += this.sampleT;
     if (this.debugT > 0.5 && this.toastCb) {
       this.debugT = 0;
-      this.toastCb(`缓冲区${this.buf.length}帧 步数${this.stepTs.length} 速度${(this.speed*100).toFixed(0)} 熵${this.entropy.toFixed(2)}`);
-    }
-
-    // 超过 2 秒没新步 → 清零
-    if (this.stepTs.length > 0 && t - this.stepTs[this.stepTs.length - 1] > 2) {
-      this.stepTs = [];
-      this.smoothSpeed = 0;
-      this.running = false;
-      this.entropy = 0;
+      this.toastCb(`阶段${this.detecting?'1扫描':'2追踪'} 步${this.stepTs.length} 速${(this.speed*100).toFixed(0)} 相${(this.phase*100).toFixed(0)} 熵${this.entropy.toFixed(2)}`);
     }
   }
 }
