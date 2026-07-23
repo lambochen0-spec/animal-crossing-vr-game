@@ -234,6 +234,8 @@ export class Game {
 
     // 世界
     this.world = new World();
+    // VR 视锥体裁剪：把相机引用注入 world，每帧 cull 树 InstancedMesh
+    this.world.camera = this.camera;
     this.world.buildPier();
     if (!new URLSearchParams(location.search).has('nomerge')) this.world.mergeStaticDecor(); // 静态建筑/装饰合并成大 mesh（降 draw call，VR 流畅度优化）
     this.scene.add(this.world.group);
