@@ -767,6 +767,8 @@ export class World {
   private static FRUIT_CAP = 700;
   private trunkI!: THREE.InstancedMesh;
   private leafI: THREE.InstancedMesh[] = [];
+  // VR 性能：外部注入相机引用用于树 InstancedMesh 视锥体裁剪（避免 GPU 全实例 vertex shader）
+  camera: THREE.Camera | null = null;
   private fruitBodyI!: THREE.InstancedMesh;
   private fruitTopI!: THREE.InstancedMesh;
   private fruitStemI!: THREE.InstancedMesh;
