@@ -62,8 +62,9 @@ export class MarchDetector {
         c.peaked = false;
         c.peakOsc = 0;
       } else {
-        // 抬过 +0.5cm 再回落到峰值 1/4 = 一步候选（Pico Neo 3 跑步实际颠 0.5~1.5cm，原 1.8cm 卡死）
-        if (!c.peaked && osc > 0.005 && c.prevOsc <= osc) { c.peaked = true; c.peakOsc = osc; }
+        // 抬过 +0.3cm 再回落到峰值 1/4 = 一步候选（Pico Neo 3 跑步实际颠 0.5~1.5cm，
+        // 扣基线跟踪/IMU 误差后剩 4~4.5mm；给 2mm 余量。3mm 仍高于 IMU 垂直轴噪声 < 1.5mm 3σ）
+        if (!c.peaked && osc > 0.003 && c.prevOsc <= osc) { c.peaked = true; c.peakOsc = osc; }
         if (c.peaked) c.peakOsc = Math.max(c.peakOsc, osc);
         if (c.peaked && osc < c.peakOsc * 0.25) {
           c.peaked = false;
@@ -81,14 +82,15 @@ export class MarchDetector {
     // 振幅驱动：头在持续晃动（amp 维持）+ 至少检出过一步 = 走；步频只决定档位。
     // 不再依赖"连续节奏"——真机噪声下节奏计数会断，导致走走停停
     let target = 0;
-    if (this.rhythm >= 1 && this.amp > 0.004) {
+    // amp 在 2.6Hz 步频下谷底会衰减到峰值的 52%（5mm→2.6mm），原 0.004 会在每步谷底断裂
+    if (this.rhythm >= 1 && this.amp > 0.002) {
       if (this.goodIv === 0) {
         target = 0.9; // 第一步：缓冲低速，第二步确认步频后提档
       } else {
         const hz = 1 / this.goodIv;
         if (hz >= 2.0) target = Math.min(3.8, 0.8 + (hz - 2.0) * 2.0); // 步幅最高 3.8 米/秒
       }
-      this.running = this.goodIv !== 0 && 1 / this.goodIv >= 2.6;
+      this.running = this.goodIv !== 0 && 1 / this.goodIv >= 2.2;
     } else this.running = false;
     // 快速启停（起步/停步都要跟脚）
     const k = target > this.speed ? 12 : 24;
