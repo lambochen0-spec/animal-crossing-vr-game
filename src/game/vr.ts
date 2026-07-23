@@ -53,7 +53,6 @@ export class MarchDetector {
   speed = 0;
   running = false;
 
-  private debugT = 0;
   private toastCb: ((msg: string) => void) | null = null;
   setToastCb(cb: (msg: string) => void) { this.toastCb = cb; }
 
@@ -172,13 +171,6 @@ export class MarchDetector {
     this.smoothSpeed += (target - this.smoothSpeed) * Math.min(1, dt * k);
     if (this.smoothSpeed < 0.05) this.smoothSpeed = 0;
     this.speed = this.smoothSpeed;
-
-    // 调试
-    this.debugT += this.sampleT;
-    if (this.debugT > 0.5 && this.toastCb) {
-      this.debugT = 0;
-      this.toastCb(`阶段${this.detecting?'1扫描':'2追踪'} 步${this.stepTs.length} 速${(this.speed*100).toFixed(0)} 相${(this.phase*100).toFixed(0)} 熵${this.entropy.toFixed(2)}`);
-    }
   }
 }
 
@@ -290,8 +282,6 @@ export class VRSystem {
       r.xr.enabled = true;
       r.xr.setReferenceSpaceType('local-floor');
       r.xr.setFoveation(0.3);
-      // 注册踏步调试：300ms 弹一次头部位置（VR 模式下可见）
-      this.march.setToastCb(msg => store.patch({ toast: { title: '🚶', desc: msg } }));
       // VR 减负：降渲染分辨率 + 缩短视距（大世界立体渲染是卡顿主因，远裁剪直接少画一半物体）
       this.savedPixelRatio = r.getPixelRatio();
       r.setPixelRatio(Math.min(0.65, this.savedPixelRatio));
