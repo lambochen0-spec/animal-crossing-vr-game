@@ -254,6 +254,13 @@ export class VRSystem {
 
   exit() { void this.session?.end(); }
 
+  /** 在 updatePlayer() 之后调用，同步 rig 位置到最新 playerPos，消除一帧滞后 */
+  syncRigPosition() {
+    if (!this.active) return;
+    const p = this.host.playerPos;
+    this.rig.position.set(p.x, p.y, p.z);
+  }
+
   private savedPixelRatio = 1;
   private savedFar = 600;
   private savedFog: [number, number] | null = null;
