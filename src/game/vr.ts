@@ -43,7 +43,6 @@ export class MarchDetector {
   private originSet = false;
   private moving = false;
   private peakDist = 0;
-  private idleFrames = 0;   // 连续"静止"帧数，用来重置原点
 
   private stepTs: number[] = [];      // 步时间戳
 
@@ -82,25 +81,15 @@ export class MarchDetector {
           this.stepTs.push(t);
           if (this.stepTs.length > 8) this.stepTs.shift();
         }
-        // 重置
         this.ox = headX; this.oz = headZ;
         this.moving = false;
         this.peakDist = 0;
-        this.idleFrames = 0;
       }
     } else {
       // 静止中 → 检测远离原点（低门槛 2cm）
       if (dist >= 0.02) {
         this.moving = true;
         this.peakDist = dist;
-        this.idleFrames = 0;
-      } else {
-        this.idleFrames++;
-        // 连续 30 帧都静止（约 1 秒），重置原点跟随轻微漂移
-        if (this.idleFrames > 30) {
-          this.ox = headX; this.oz = headZ;
-          this.idleFrames = 0;
-        }
       }
     }
 
