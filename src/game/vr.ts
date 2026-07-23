@@ -33,69 +33,69 @@ export interface VRHost {
 // 检测水平位置「离开→到达峰值→返回原点附近」这样一个周期 = 一步。
 // 水平摆动幅度远大于Quest头显的垂直晃动，识别更可靠。
 export class MarchDetector {
-  // 环形缓冲区（20个采样点 @ 15 FPS ≈ 1.3秒窗口）
+  // 采样
   private buf: { x: number; z: number }[] = [];
-  private readonly MAX_N = 20;
   private readonly SAMPLE_DT = 1 / 30;
   private sampleT = 0;
 
-  // 步检测状态
-  private swingX = 0;           // 从原点算起的水平摆动
-  private swingZ = 0;
-  private crossUp = false;      // 过零上升（远离原点方向）
-  private prevSwing = 0;        // 前一次摆动幅度
-  private stepTs: number[] = []; // 最近8步的时间戳
+  // 原点 + 摆动状态
+  private ox = 0; private oz = 0;    // 固定原点（头"静止"时的位置）
+  private originSet = false;
+  private moving = false;             // 正在远离原点
+  private peakDist = 0;               // 本次摆动已达到的最大距离
 
-  // 速度输出
+  private stepTs: number[] = [];      // 步时间戳
+
   private smoothSpeed = 0;
   speed = 0;
   running = false;
 
-  // 水平检测不受点头/摇头影响，无需disturb
   disturb() {}
 
   update(headX: number, headZ: number, t: number, dt: number) {
-    // 固定15 FPS采样（跟Babylon一致）
+    // 固定频率采样
     this.sampleT += dt;
-    this.sampleT = Math.min(this.sampleT, this.SAMPLE_DT * 3); // 防跳帧
+    this.sampleT = Math.min(this.sampleT, this.SAMPLE_DT * 3);
     if (this.sampleT < this.SAMPLE_DT) return;
     this.sampleT -= this.SAMPLE_DT;
 
-    this.buf.push({ x: headX, z: headZ });
-    if (this.buf.length > this.MAX_N) this.buf.shift();
-    if (this.buf.length < 6) return;
-
-    // ---- 计算摆动（相对短期中心5帧EMA） ----
-    let cx = 0, cz = 0;
-    const m = 5;
-    for (let i = 0; i < m; i++) {
-      const s = this.buf[this.buf.length - 1 - i];
-      cx += s.x; cz += s.z;
+    // 首次：设原点
+    if (!this.originSet) {
+      this.ox = headX; this.oz = headZ;
+      this.originSet = true;
+      return;
     }
-    cx /= m; cz /= m;
 
-    const dx = headX - cx;
-    const dz = headZ - cz;
-    const swing = Math.sqrt(dx * dx + dz * dz);
+    // 距原点的距离
+    const dx = headX - this.ox;
+    const dz = headZ - this.oz;
+    const dist = Math.sqrt(dx * dx + dz * dz);
 
-    // ---- 过零检测：摆动从增加到减少 = 一次峰值 ----
-    if (swing > 0.03) { // 至少3cm摆动才算有效
-      if (!this.crossUp && swing > this.prevSwing) {
-        this.crossUp = true;
-      } else if (this.crossUp && swing < this.prevSwing) {
-        // 到达峰值开始回落 → 记半步
-        this.crossUp = false;
-        if (swing >= 0.06) { // 峰值至少6cm才算有效步伐
+    // 记录本次摆动达到的最大距离
+    if (dist > this.peakDist) this.peakDist = dist;
+
+    if (this.moving) {
+      // 正在摆动中 → 检测是否回到了原点附近
+      if (dist < 0.03) {
+        // 回到原点 → 记一步（峰值至少 6cm 才算有效步伐）
+        if (this.peakDist >= 0.06) {
           this.stepTs.push(t);
           if (this.stepTs.length > 8) this.stepTs.shift();
         }
+        // 重置原点、等待下一次摆动
+        this.ox = headX; this.oz = headZ;
+        this.moving = false;
+        this.peakDist = 0;
       }
     } else {
-      this.crossUp = false;
+      // 静止中 → 检测是否开始远离原点
+      if (dist >= 0.05) {
+        this.moving = true;
+        this.peakDist = dist;
+      }
     }
-    this.prevSwing = swing;
 
-    // ---- 步频 → 目标速度（第一步就动，默认步频 1.25 Hz ≈ 每秒1.25步） ----
+    // ---- 步频 → 速度（第一步就动） ----
     let target = 0;
     if (this.stepTs.length >= 1) {
       const hz = this.stepTs.length >= 2
@@ -107,17 +107,20 @@ export class MarchDetector {
       }
     }
 
-    // ---- 速度平滑（起步快、停步更快） ----
+    // 平滑
     const k = target > this.smoothSpeed ? 10 : 20;
     this.smoothSpeed += (target - this.smoothSpeed) * Math.min(1, dt * k);
     if (this.smoothSpeed < 0.05) this.smoothSpeed = 0;
     this.speed = this.smoothSpeed;
 
-    // 超过2秒没新步 → 清零
+    // 超时
     if (this.stepTs.length > 0 && t - this.stepTs[this.stepTs.length - 1] > 2) {
       this.stepTs = [];
       this.smoothSpeed = 0;
       this.running = false;
+      this.moving = false;
+      this.originSet = false;
+      this.peakDist = 0;
     }
   }
 }
