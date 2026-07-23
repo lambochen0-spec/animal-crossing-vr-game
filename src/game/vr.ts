@@ -43,6 +43,10 @@ export class MarchDetector {
   private originSet = false;
   private moving = false;
   private peakDist = 0;
+  private debugT = 0;
+  private toastCb: ((msg: string) => void) | null = null;
+
+  setToastCb(cb: (msg: string) => void) { this.toastCb = cb; }
 
   private stepTs: number[] = [];      // 步时间戳
 
@@ -70,6 +74,13 @@ export class MarchDetector {
     const dx = headX - this.ox;
     const dz = headZ - this.oz;
     const dist = Math.sqrt(dx * dx + dz * dz);
+
+    // 调试：每 0.5s 通过 toast 显示头部位置数据（仅在 VR 模式下可见）
+    this.debugT += this.sampleT;
+    if (this.debugT > 0.5 && this.toastCb) {
+      this.debugT = 0;
+      this.toastCb(`头位置 X:${(headX*100).toFixed(0)}cm Z:${(headZ*100).toFixed(0)}cm | 离原点${(dist*100).toFixed(0)}cm | 摆动${this.moving?'是':'否'} | 波峰${(this.peakDist*100).toFixed(0)}cm`);
+    }
 
     if (dist > this.peakDist) this.peakDist = dist;
 
@@ -230,7 +241,9 @@ export class VRSystem {
       const r = this.host.renderer;
       r.xr.enabled = true;
       r.xr.setReferenceSpaceType('local-floor');
-      r.xr.setFoveation(0.3); // 降低固定注视点渲染强度，消除边缘分界线
+      r.xr.setFoveation(0.3);
+      // 注册踏步调试：300ms 弹一次头部位置（VR 模式下可见）
+      this.march.setToastCb(msg => store.patch({ toast: { title: '🚶', desc: msg } }));
       // VR 减负：降渲染分辨率 + 缩短视距（大世界立体渲染是卡顿主因，远裁剪直接少画一半物体）
       this.savedPixelRatio = r.getPixelRatio();
       r.setPixelRatio(Math.min(0.65, this.savedPixelRatio));
