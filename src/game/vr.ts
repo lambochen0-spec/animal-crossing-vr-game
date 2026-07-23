@@ -26,130 +26,103 @@ export interface VRHost {
   onPointPickup(id: number): void;    // 手柄指着掉落物扣扳机 → 放入背包
   getTalkTargets(): { id: string; pos: THREE.Vector3; top: number }[]; // 可对话角色（指向对话用）
   onPointTalk(id: string): void;      // 手柄指着角色扣扳机 → 对话
+  getMapMarkers(): { name: string; x: number; z: number; color: string }[]; // 宝可梦实时位置（手机地图页）
 }
 
-// ================= 原地踏步检测（Babylon.js 水平振荡方案）=================
-// 原理：原地踏步时头部会在水平方向左右/前后摆动（重心转移），
-// 检测水平位置「离开→到达峰值→返回原点附近」这样一个周期 = 一步。
-// 水平摆动幅度远大于Quest头显的垂直晃动，识别更可靠。
-// ================= 原地踏步检测（Babylon.js 水平振荡方案）=================
-// 原理：原地踏步时头部会在水平方向左右/前后摆动（重心转移），
-// 检测水平位置「离开→到达峰值→返回原点附近」这样一个周期 = 一步。
-// 水平摆动幅度远大于Quest头显的垂直晃动，识别更可靠。
+// ================= 原地踏步检测 =================
+// 原理：原地跑步时头部「上下 + 左右」复合摆动，两个轴向各跑一套「抬峰-回落」检测，
+// 任一通道检出一步即计步；两通道共享节奏/步频（谐波过滤防止侧摆半频拖乱主节奏）
 export class MarchDetector {
-  // ---- 阶段1：缓冲区扫描（检测第一步，校准步态轴） ----
-  private buf: { x: number; z: number }[] = [];
-  private readonly SAMPLE_DT = 1 / 15;
-  private sampleT = 0;
-  private entropy = 0;
-  private detecting = true;
-
-  // ---- 阶段2：相位追踪（沿步态轴跟踪，累计 + 衰减） ----
-  private axisX = 0; private axisZ = 0;
-  private apexDist = 0;
-  private phase = 0;
-  private prevPhase = -1;
-  private lastAxisReset = 0;
-  private movement = 0;             // ← Babylon 的 movement 累加器
-
-  speed = 0;
+  private ch = [
+    { base: 0, init: false, prevOsc: 0, peaked: false, peakOsc: 0 }, // 通道0：上下（headY）
+    { base: 0, init: false, prevOsc: 0, peaked: false, peakOsc: 0 }, // 通道1：左右（headX，rig 局部坐标）
+  ];
+  private amp = 0;          // 起伏振幅包络（快速停步检测）
+  private lastStepAt = 0;
+  private goodIv = 0;       // 有效步频间隔（EMA）
+  private rhythm = 0;       // 连续符合节奏的步数
+  private tiltCd = 0;       // 低头/抬头后的检测冷却
+  speed = 0;                // 平滑后的目标速度（米/秒）
   running = false;
 
-  disturb() {}
-
-  private detectStep(headX: number, headZ: number, t: number) {
-    this.buf.push({ x: headX, z: headZ });
-    if (this.buf.length > 20) this.buf.shift();
-    if (this.buf.length < 7) return;
-
-    const origin = this.buf[0];
-    const d1 = origin.x - this.buf[1].x, d2 = origin.z - this.buf[1].z;
-    this.entropy = this.entropy * 0.93 + Math.sqrt(d1 * d1 + d2 * d2);
-    if (this.entropy > 0.4) return;
-
-    const startIdx = Math.floor(this.buf.length / 3);
-    for (let si = startIdx; si < this.buf.length; si++) {
-      const dx = origin.x - this.buf[si].x;
-      const dz = origin.z - this.buf[si].z;
-      if (Math.sqrt(dx * dx + dz * dz) < 0.03) {
-        let bestApex = 0, bestIdx = -1;
-        for (let k = 1; k < si; k++) {
-          const ax = this.buf[k].x - origin.x, az = this.buf[k].z - origin.z;
-          const ad = Math.sqrt(ax * ax + az * az);
-          if (ad > bestApex) { bestApex = ad; bestIdx = k; }
+  // headY 上下起伏 / headX 左右摆动；pitch：头部俯仰角——低头看手腕/抬头看天时暂停计步
+  update(headY: number, headX: number, t: number, dt: number, pitch = 0) {
+    if (Math.abs(pitch) > 0.5) this.tiltCd = 0.3;
+    else this.tiltCd = Math.max(0, this.tiltCd - dt);
+    const vals = [headY, headX];
+    let maxOsc = 0;
+    for (let ci = 0; ci < 2; ci++) {
+      const c = this.ch[ci];
+      const v = vals[ci];
+      if (!c.init) { c.base = v; c.init = true; }
+      c.base += (v - c.base) * Math.min(1, dt * 0.8);
+      const osc = v - c.base;
+      maxOsc = Math.max(maxOsc, Math.abs(osc));
+      if (this.tiltCd > 0) {
+        c.peaked = false;
+        c.peakOsc = 0;
+      } else {
+        // 抬过 +1.8cm 再回落到峰值 1/4 = 一步候选（提前确认，起步更快；峰值过滤微抖）
+        if (!c.peaked && osc > 0.018 && c.prevOsc <= osc) { c.peaked = true; c.peakOsc = osc; }
+        if (c.peaked) c.peakOsc = Math.max(c.peakOsc, osc);
+        if (c.peaked && osc < c.peakOsc * 0.25) {
+          c.peaked = false;
+          const valid = c.peakOsc > 0.012; // 峰值至少 1.2cm 才算一步
+          c.peakOsc = 0;
+          if (valid) this.step(t);
         }
-        if (bestApex >= 0.09) {
-          // 建立步态轴（起点→波峰方向）
-          this.axisX = this.buf[bestIdx].x - origin.x;
-          this.axisZ = this.buf[bestIdx].z - origin.z;
-          const len = Math.sqrt(this.axisX * this.axisX + this.axisZ * this.axisZ);
-          if (len > 0.01) { this.axisX /= len; this.axisZ /= len; }
-          this.apexDist = bestApex;
-          this.phase = 0;
-          this.prevPhase = -1;
-          this.movement = 0;
-          this.detecting = false;
-          this.lastAxisReset = t;
-          this.buf.splice(0, si);
-          // 第一步先给个小速度让玩家感到响应
-          this.movement = 0.15;
-        }
-        return;
       }
+      c.prevOsc = osc;
     }
+    // 振幅包络：停步后起伏立刻消失，0.2s 半衰期 → 停步延迟与步频解耦
+    this.amp = Math.max(maxOsc, this.amp * Math.pow(0.5, dt / 0.2));
+    // 停步 1.2s 后节奏清零（下次从头起步）
+    if (t - this.lastStepAt > 1.2) this.rhythm = 0;
+    // 振幅驱动：头在持续晃动（amp 维持）+ 至少检出过一步 = 走；步频只决定档位。
+    // 不再依赖"连续节奏"——真机噪声下节奏计数会断，导致走走停停
+    let target = 0;
+    if (this.rhythm >= 1 && this.amp > 0.014) {
+      if (this.goodIv === 0) {
+        target = 0.9; // 第一步：缓冲低速，第二步确认步频后提档
+      } else {
+        const hz = 1 / this.goodIv;
+        if (hz >= 2.0) target = Math.min(3.8, 0.8 + (hz - 2.0) * 2.0); // 步幅最高 3.8 米/秒
+      }
+      this.running = this.goodIv !== 0 && 1 / this.goodIv >= 2.6;
+    } else this.running = false;
+    // 快速启停（起步/停步都要跟脚）
+    const k = target > this.speed ? 12 : 24;
+    this.speed += (target - this.speed) * Math.min(1, dt * k);
+    if (this.speed < 0.05) this.speed = 0;
   }
 
-  private trackStep(headX: number, headZ: number, t: number) {
-    // 沿步态轴投影 → 相位（0~1, 从原点→波峰）
-    const proj = headX * this.axisX + headZ * this.axisZ;
-    const rawPhase = this.apexDist > 0.01 ? Math.abs(proj) / this.apexDist : 0;
-
-    if (this.prevPhase >= 0) {
-      const dPhase = rawPhase - this.prevPhase;
-
-      // 相位增长 → 朝波峰走 → 累计 movement（Babylon 的 0.024 × Δt）
-      if (dPhase > 0.005) {
-        this.movement += 0.6 * dPhase;
-      }
-
-      // 相位大幅下降 → 完成半个周期，重置相位追踪
-      if (dPhase < -0.15) {
-        this.prevPhase = -1;
-        return;
-      }
+  // 任一通道检出一步 → 统一节奏判定（iv<0.25 抖动忽略；谐波/半频步不干扰主节奏）
+  private step(t: number) {
+    const iv = t - this.lastStepAt;
+    if (this.lastStepAt === 0) {
+      // 全局第一步：建立起点（否则第一个 0.2s 的步会被误判为抖动）
+      this.lastStepAt = t;
+      this.rhythm = 1;
+      this.goodIv = 0;
+      return;
     }
-
-    this.phase = rawPhase;
-    this.prevPhase = rawPhase;
-
-    // 每帧衰减（Babylon 的 ×0.85 @ 15 FPS）
-    this.movement *= 0.85;
-
-    // movement → speed
-    this.speed = Math.min(3.0, this.movement);
-
-    // 超过 2 秒没移动 → 回阶段1
-    if (t - this.lastAxisReset > 2 && this.movement < 0.01) {
-      this.detecting = true;
-      this.entropy = 0;
-      this.buf = [];
-      this.movement = 0;
-      this.speed = 0;
+    if (iv < 0.25) return; // 高频抖动，完全忽略（不刷新计时）
+    if (this.goodIv !== 0 && (iv > this.goodIv * 1.6 || iv < this.goodIv * 0.6)) {
+      return; // 另一通道的半频/倍频（侧摆周期≠步频），忽略以免拖乱节奏
     }
-  }
-
-  update(headX: number, headZ: number, t: number, dt: number) {
-    this.sampleT += dt;
-    if (this.sampleT < this.SAMPLE_DT) return;
-    this.sampleT -= this.SAMPLE_DT;
-
-    if (this.detecting) {
-      this.detectStep(headX, headZ, t);
-    } else {
-      this.trackStep(headX, headZ, t);
+    if (iv <= 0.9) {
+      this.lastStepAt = t;
+      this.rhythm = Math.min(4, this.rhythm + 1);
+      this.goodIv = this.goodIv === 0 ? iv : this.goodIv + (iv - this.goodIv) * 0.6;
+    } else if (this.rhythm < 2) {
+      this.lastStepAt = t;
+      this.rhythm = 1;  // 第一步：允许低速起步
+      this.goodIv = 0;  // 步频未知，待第二步确认
     }
+    // iv>0.9 且已有稳定节奏：散步，忽略（防另一通道拖断节奏；停步由 amp/超时处理）
   }
 }
+
 // ================= 挥臂检测 =================
 // 跟踪手柄世界速度：向下劈/向前挥超过阈值 = 一次挥动
 export class SwingDetector {
@@ -226,9 +199,8 @@ export class VRSystem {
   private tmpV2 = new THREE.Vector3();
   // 指向交互：每只手指着的目标（掉落物 = 拾取；角色 = 对话）
   private pointByHand: ({ kind: 'pickup' | 'talk'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number } | null)[] = [null, null];
+  private triggerHeld = [false, false];   // 扳机按住状态（挥臂命中工具的前置条件）
   private talkSprites: THREE.Sprite[] = [];   // 指着角色时头顶的 💬 气泡
-  private prevViewYaw = 0;
-  private prevPitch = 0;
   private tmpQ = new THREE.Quaternion();
   private tmpA = new THREE.Vector3();
   private tmpB = new THREE.Vector3();
@@ -257,15 +229,16 @@ export class VRSystem {
       const r = this.host.renderer;
       r.xr.enabled = true;
       r.xr.setReferenceSpaceType('local-floor');
-      r.xr.setFoveation(0.3);
       // VR 减负：降渲染分辨率 + 缩短视距（大世界立体渲染是卡顿主因，远裁剪直接少画一半物体）
       this.savedPixelRatio = r.getPixelRatio();
       r.setPixelRatio(Math.min(0.65, this.savedPixelRatio));
       this.savedFar = this.host.camera.far;
-      this.host.camera.far = 130;
+      this.host.camera.far = 35;
       const fog = this.host.scene.fog as THREE.Fog | null;
-      if (fog) { this.savedFog = [fog.near, fog.far]; fog.near = 18; fog.far = 118; }
+      if (fog) { this.savedFog = [fog.near, fog.far]; fog.near = 8; fog.far = 32; }
       await r.xr.setSession(session);
+      // 固定注视点渲染：视野边缘降分辨率（省像素，转头黑边区域正受益）
+      (r.xr as unknown as { setFoveation?: (f: number) => void }).setFoveation?.(1);
       this.setupScene();
       this.host.onVRStart();
       session.addEventListener('end', () => this.teardown());
@@ -277,13 +250,6 @@ export class VRSystem {
   }
 
   exit() { void this.session?.end(); }
-
-  /** 在 updatePlayer() 之后调用，同步 rig 位置到最新 playerPos，消除一帧滞后 */
-  syncRigPosition() {
-    if (!this.active) return;
-    const p = this.host.playerPos;
-    this.rig.position.set(p.x, p.y, p.z);
-  }
 
   private savedPixelRatio = 1;
   private savedFar = 600;
@@ -311,8 +277,9 @@ export class VRSystem {
         this.inputs[i] = (e as unknown as { data: XRInputSource }).data;
         c.visible = true;
       });
-      c.addEventListener('disconnected', () => { this.inputs[i] = null; });
-      c.addEventListener('selectstart', () => this.onSelect(i));
+      c.addEventListener('disconnected', () => { this.inputs[i] = null; this.triggerHeld[i] = false; });
+      c.addEventListener('selectstart', () => { this.triggerHeld[i] = true; this.onSelect(i); });
+      c.addEventListener('selectend', () => { this.triggerHeld[i] = false; });
       // 激光线（对话选项面板出现时显示，指向哪个选项哪个发光）
       const laser = new THREE.Mesh(
         new THREE.BoxGeometry(0.006, 0.006, 3),
@@ -376,64 +343,51 @@ export class VRSystem {
 
   // ---------------- 每帧更新（由 Game 主循环调用）----------------
   private drAcc = 0; private drN = 0; private drCd = 0; private curPR = 0.65;
-  update(dt: number, now: number, xrFrame?: XRFrame) {
+  private lastAvgMs = 0; // 最近平均帧时间（左腕状态页显示用）
+  // 头部世界 Y 慢跟踪基线 + rig 局部 headX 基线（修 ❶：camera 在 rig 里 position 恒 0，原代码用 camera.position.y/x 永远 ~0，Pico 跑步时根本检测不到）
+  private headWorldY = 0; private headWorldYBase = 0; private headWorldYInit = false;
+  private headLocalXBase = 0; private headLocalXInit = false;
+  update(dt: number, now: number) {
     if (!this.active) return;
-    const { camera, playerPos } = this.host;
-    // 动态分辨率：平均帧时间过长就继续降像素比，宽裕则回升（0.5~0.8 之间浮动）
+    const { camera } = this.host;
+    // 动态分辨率：平均帧时间过长就继续降像素比，宽裕则回升（0.4~0.8 之间浮动）
     this.drAcc += dt; this.drN++; this.drCd -= dt;
     if (this.drCd <= 0 && this.drN > 10) {
       const avg = this.drAcc / this.drN;
       this.drAcc = 0; this.drN = 0; this.drCd = 2;
-      if (avg > 0.016 && this.curPR > 0.5) {
-        this.curPR = Math.max(0.5, this.curPR - 0.1);
+      this.lastAvgMs = avg * 1000;
+      if (avg > 0.020 && this.curPR > 0.4) {
+        this.curPR = Math.max(0.4, this.curPR - 0.1);
         this.host.renderer.setPixelRatio(this.curPR);
-      } else if (avg < 0.009 && this.curPR < 0.8) {
+      } else if (avg < 0.014 && this.curPR < 0.8) {
         this.curPR = Math.min(0.8, this.curPR + 0.05);
         this.host.renderer.setPixelRatio(this.curPR);
       }
     }
-    // rig 跟随玩家（脚底贴地）
-    this.rig.position.set(playerPos.x, playerPos.y, playerPos.z);
-    this.rig.rotation.y = this.snapYaw;
     // 世界视线朝向 → 同步给游戏（移动方向/交互判定都靠它）
     camera.getWorldDirection(this.tmpV);
     const viewYaw = Math.atan2(-this.tmpV.x, -this.tmpV.z);
     this.host.setViewYaw(viewYaw);
-    // 原地踏步 → 移动（仅头部起伏检测；低头/抬头时暂停防误走）
+    // 头部世界 Y（跑步时上下颠的真实距离）+ rig 局部 headX（左右摆：站直时 camera.position.x~0，歪头会偏）
+    camera.getWorldPosition(this.tmpA);
+    if (!this.headWorldYInit) { this.headWorldYBase = this.tmpA.y; this.headWorldYInit = true; }
+    // 慢跟踪基线（~0.8/s），过滤掉跑步时 1~3cm 步颠簸本身
+    this.headWorldYBase += (this.tmpA.y - this.headWorldYBase) * Math.min(1, dt * 0.8);
+    const headWorldY = this.tmpA.y - this.headWorldYBase;
+    if (!this.headLocalXInit) { this.headLocalXBase = camera.position.x; this.headLocalXInit = true; }
+    this.headLocalXBase += (camera.position.x - this.headLocalXBase) * Math.min(1, dt * 0.8);
+    const headLocalX = camera.position.x - this.headLocalXBase;
+    // 原地踏步 → 移动（头部上下+左右双通道检测；低头/抬头时暂停防误走）
     const headPitch = Math.asin(THREE.MathUtils.clamp(this.tmpV.y, -1, 1));
-    // 头显角速度：快速摇头/点头时暂停计步（否则晃头被当成踏步 → 角色移动 → 场景看起来在抖）
-    if (dt > 0.0001) {
-      let dYaw = viewYaw - this.prevViewYaw;
-      while (dYaw > Math.PI) dYaw -= Math.PI * 2;
-      while (dYaw < -Math.PI) dYaw += Math.PI * 2;
-      if (Math.abs(dYaw / dt) > 1.6 || Math.abs((headPitch - this.prevPitch) / dt) > 1.6) this.march.disturb();
-    }
-    this.prevViewYaw = viewYaw;
-    this.prevPitch = headPitch;
-    // 从 XR Frame 直接读头部位置（Babylon.js 方式），而不是从 camera.position（Three.js 延迟一帧）
-    let headX = camera.position.x, headZ = camera.position.z;
-    if (xrFrame && this.session) {
-      try {
-        const refSpace = this.host.renderer.xr.getReferenceSpace();
-        if (refSpace) {
-          const pose = xrFrame.getViewerPose(refSpace);
-          if (pose) {
-            const m = pose.transform.matrix;
-            headX = m[12];
-            headZ = m[14];
-          }
-        }
-      } catch { /* fallback to camera.position */ }
-    }
-    this.march.update(headX, headZ, now / 1000, dt);
+    this.march.update(headWorldY, headLocalX, now / 1000, dt, headPitch);
     this.applyLocomotion(viewYaw, dt);
     // 手柄按键（摇杆快速转向 + A/B 切工具）
     this.pollGamepads(dt);
-    // 挥臂检测（双手都算，力度取大）
+    // 挥臂检测（双手都算；必须扣着该手扳机才命中工具——跑步摆臂不再误触）
     for (let i = 0; i < 2; i++) {
       const c = this.controllers[i];
       if (!c || !c.visible) continue;
-      if (this.swings[i].update(c, dt, this.march.speed)) {
+      if (this.swings[i].update(c, dt, this.march.speed) && this.triggerHeld[i]) {
         this.host.onVrSwing(this.swings[i].power);
         this.pulse(i, 0.4 + this.swings[i].power * 0.6, 90);
       }
@@ -455,6 +409,15 @@ export class VRSystem {
     this.updateDialogPanel(viewYaw, dt);
     // 指向拾取：手柄射线指着 8m 内的掉落物 → 高亮 + 激光指引（对话/开店时禁用）
     this.updatePointAim();
+  }
+
+  // 主循环在 updatePlayer 之后、渲染之前调用：
+  // rig 贴本帧最新玩家位置（否则滞后一帧，转头/移动时场景轻微跟晃）
+  syncRig() {
+    if (!this.active) return;
+    const p = this.host.playerPos;
+    this.rig.position.set(p.x, p.y, p.z);
+    this.rig.rotation.y = this.snapYaw;
   }
 
   // ---------------- 指向拾取（VR 代替"走近自动/E键拾取"）----------------
@@ -543,6 +506,8 @@ export class VRSystem {
       const src = this.inputs[i];
       const gp = src?.gamepad;
       if (!gp) continue;
+      // 扳机状态轮询同步（双保险：selectend 事件丢失时仍能正确松开）
+      this.triggerHeld[i] = !!gp.buttons[0]?.pressed;
       const ax = gp.axes[2] ?? gp.axes[0] ?? 0;
       const ay = gp.axes[3] ?? gp.axes[1] ?? 0;
       if (this.stickCd <= 0) {
@@ -757,6 +722,10 @@ export class VRSystem {
       ctx.fillStyle = this.march.speed > 0.1 ? '#8aff8a' : '#8899aa';
       ctx.font = 'bold 24px sans-serif';
       ctx.fillText(`🚶 ${this.march.speed.toFixed(1)}`, 300, 86);
+      // 帧时间（调黑边问题用：>14ms 即超帧预算）
+      ctx.fillStyle = this.lastAvgMs > 14 ? '#ff9a7a' : '#7fd97f';
+      ctx.font = '18px sans-serif';
+      ctx.fillText(`⏱ ${this.lastAvgMs.toFixed(0)}ms`, 300, 114);
       const toolName: Record<string, string> = { hand: '✋ 空手', net: '🥅 捕虫网', rod: '🎣 钓竿', shovel: '⛏️ 铲子', axe: '🪓 斧头' };
       ctx.fillStyle = '#b8e6b8';
       ctx.font = 'bold 26px sans-serif';
@@ -858,6 +827,24 @@ export class VRSystem {
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 3;
     ctx.stroke();
+    // 宝可梦实时位置（名字+彩色点；视距 35m，靠地图找人）
+    for (const m of this.host.getMapMarkers()) {
+      const mx = ((m.x + 96) / 192) * 480 + 16;
+      const mz = ((m.z + 96) / 192) * 480 + 86;
+      ctx.fillStyle = m.color;
+      ctx.beginPath();
+      ctx.arc(mx, mz, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#1a2433';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.font = 'bold 14px sans-serif';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(10,16,26,0.9)';
+      ctx.strokeText(m.name, mx + 9, mz + 5);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(m.name, mx + 9, mz + 5);
+    }
     ctx.fillStyle = '#8fa8c8';
     ctx.font = '20px sans-serif';
     ctx.fillText(`${s.islandName || '小岛'} · ${s.timeText}`, 18, 600);

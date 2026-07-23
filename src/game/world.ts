@@ -260,7 +260,7 @@ export class Tree {
 }
 
 export interface Rock { x: number; z: number; group: THREE.Group; cooldownUntil: number; }
-export interface Flower { id: number; x: number; z: number; itemId: string; group: THREE.Group; }
+export interface Flower { id: number; x: number; z: number; itemId: string; slot: number; } // slot = 实例网格槽位（花草已实例化渲染）
 export interface DigSpot { id: number; x: number; z: number; mesh: THREE.Mesh; }
 export interface Sapling { x: number; z: number; group: THREE.Group; growT: number; fruit?: string; }
 
@@ -382,7 +382,7 @@ export class World {
   digSpots: DigSpot[] = [];
   pickups: Pickup[] = [];
   saplings: Sapling[] = [];
-  weeds: { id: number; x: number; z: number; group: THREE.Group }[] = [];
+  weeds: { id: number; x: number; z: number; slot: number }[] = []; // slot = 实例网格槽位
   houses: { name: string; x: number; z: number }[] = [];
   shopPos = new THREE.Vector3(-24, 0, 22.4);
   nookPos = new THREE.Vector3(-20, 0, 21.5);
@@ -402,6 +402,74 @@ export class World {
   private leafMat: THREE.Material;
   private trunkMat: THREE.Material;
   private flowerMats: Record<string, THREE.Material> = {};
+  // ---- 花草实例化（100 花×2 面片 + 80 草×3 叶片 ≈440 mesh → 4 个 draw call）----
+  private flowerI: Record<string, { im: THREE.InstancedMesh; free: number[] }> = {};
+  private weedI: THREE.InstancedMesh | null = null;
+  private freeWeedSlots: number[] = [];
+  // 花：十字双面片（各角度可见），顶点抬到茎高
+  private flowerCrossGeo = (() => {
+    const a = new THREE.PlaneGeometry(1.05, 1.05);
+    a.translate(0, 0.52, 0);
+    const b = new THREE.PlaneGeometry(1.05, 1.05);
+    b.rotateY(Math.PI / 2);
+    b.translate(0, 0.52, 0);
+    return mergeGeometries([a, b])!;
+  })();
+  // 杂草：3 叶片合一（随机性由实例矩阵的旋转/高度表达）
+  private weedGeo = (() => {
+    const mk = (ry: number, tx: number, tz: number) => {
+      const g = new THREE.BoxGeometry(0.5, 0.75, 0.12);
+      g.translate(0, 0.375, 0);
+      g.rotateY(ry);
+      g.translate(tx, 0, tz);
+      return g;
+    };
+    return mergeGeometries([mk(0, 0, 0), mk(1.1, 0.18, -0.1), mk(2.2, -0.15, 0.12)])!;
+  })();
+
+  private ensureFlowerInst(itemId: string) {
+    if (!this.flowerI[itemId]) {
+      const cap = 220;
+      const im = new THREE.InstancedMesh(this.flowerCrossGeo, this.flowerMats[itemId], cap);
+      im.castShadow = true;
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+      for (let i = 0; i < cap; i++) im.setMatrixAt(i, zero);
+      im.instanceMatrix.needsUpdate = true;
+      this.group.add(im);
+      const free: number[] = [];
+      for (let i = cap - 1; i >= 0; i--) free.push(i);
+      this.flowerI[itemId] = { im, free };
+    }
+    return this.flowerI[itemId];
+  }
+
+  private ensureWeedInst() {
+    if (!this.weedI) {
+      const cap = 120;
+      this.weedI = new THREE.InstancedMesh(this.weedGeo, new THREE.MeshLambertMaterial({ color: 0x4a7a35 }), cap);
+      this.weedI.castShadow = false;
+      this.weedI.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+      for (let i = 0; i < cap; i++) this.weedI.setMatrixAt(i, zero);
+      this.weedI.instanceMatrix.needsUpdate = true;
+      this.group.add(this.weedI);
+      for (let i = cap - 1; i >= 0; i--) this.freeWeedSlots.push(i);
+    }
+    return this.weedI;
+  }
+
+  // 带 Y 旋转的实例矩阵写入
+  private setInstR(im: THREE.InstancedMesh, idx: number, x: number, y: number, z: number, ry: number, sy: number) {
+    this.imQ.setFromAxisAngle(this.imAxisY, ry);
+    this.imM.compose(this.imV.set(x, y, z), this.imQ, this.imS.set(1, sy, 1));
+    im.setMatrixAt(idx, this.imM);
+  }
+
+  private clearInst(im: THREE.InstancedMesh, idx: number) {
+    im.setMatrixAt(idx, this.imM.makeScale(0, 0, 0));
+    im.instanceMatrix.needsUpdate = true;
+  }
   private digTex: THREE.Texture;
   private falling: { mesh: THREE.Object3D; vy: number; item: string; groundY: number }[] = [];
 
@@ -440,21 +508,20 @@ export class World {
   spawnWeed() {
     const p = this.randomGrassPos(8);
     if (!p) return;
-    const g = new THREE.Group();
-    const mat = new THREE.MeshLambertMaterial({ color: 0x4a7a35 });
-    for (let k = 0; k < 3; k++) {
-      const blade = box(0.5, 0.6 + Math.random() * 0.3, 0.12, mat, (Math.random() - 0.5) * 0.4, 0.3, (Math.random() - 0.5) * 0.4);
-      blade.rotation.y = Math.random() * Math.PI;
-      blade.castShadow = false;
-      g.add(blade);
-    }
-    g.position.set(p[0], groundHeight(p[0], p[1]), p[1]);
-    this.group.add(g);
-    this.weeds.push({ id: this.nextId++, x: p[0], z: p[1], group: g });
+    const im = this.ensureWeedInst();
+    if (!this.freeWeedSlots.length) return;
+    const slot = this.freeWeedSlots.pop()!;
+    // 随机朝向 + 高度（0.8~1.15 倍），叶片几何体已合一
+    this.setInstR(im, slot, p[0], groundHeight(p[0], p[1]), p[1], Math.random() * Math.PI * 2, 0.8 + Math.random() * 0.35);
+    im.instanceMatrix.needsUpdate = true;
+    this.weeds.push({ id: this.nextId++, x: p[0], z: p[1], slot });
   }
   removeWeed(w: { id: number }) {
     const wd = this.weeds.find(x => x.id === w.id);
-    if (wd) this.group.remove(wd.group);
+    if (wd && this.weedI) {
+      this.clearInst(this.weedI, wd.slot);
+      this.freeWeedSlots.push(wd.slot);
+    }
     this.weeds = this.weeds.filter(x => x.id !== w.id);
   }
 
@@ -703,6 +770,7 @@ export class World {
   private freeFruitSlots: number[] = [];
   private imM = new THREE.Matrix4();
   private imQ = new THREE.Quaternion();
+  private imAxisY = new THREE.Vector3(0, 1, 0);
   private imV = new THREE.Vector3();
   private imS = new THREE.Vector3();
   private imE = new THREE.Euler();
@@ -1510,8 +1578,6 @@ export class World {
     }
   }
 
-  private flowerPlaneGeo = new THREE.PlaneGeometry(1.05, 1.05);
-
   addFlower(x: number, z: number, itemId: string) {
     if (!this.flowerMats[itemId]) {
       const colors: Record<string, [string, string]> = {
@@ -1528,21 +1594,20 @@ export class World {
         side: THREE.DoubleSide,
       });
     }
-    const g = new THREE.Group();
-    for (const ry of [0, Math.PI / 2]) {
-      const m = new THREE.Mesh(this.flowerPlaneGeo, this.flowerMats[itemId]);
-      m.rotation.y = ry;
-      m.position.y = 0.52;
-      m.castShadow = true;
-      g.add(m);
-    }
-    g.position.set(x, groundHeight(x, z), z);
-    this.group.add(g);
-    this.flowers.push({ id: this.nextId++, x, z, itemId, group: g });
+    const fi = this.ensureFlowerInst(itemId);
+    if (!fi.free.length) return; // 槽位满了就不再种（容量 220/色）
+    const slot = fi.free.pop()!;
+    this.setInst(fi.im, slot, x, groundHeight(x, z), z, 1, 1, 1);
+    fi.im.instanceMatrix.needsUpdate = true;
+    this.flowers.push({ id: this.nextId++, x, z, itemId, slot });
   }
 
   removeFlower(f: Flower) {
-    this.group.remove(f.group);
+    const fi = this.flowerI[f.itemId];
+    if (fi) {
+      this.clearInst(fi.im, f.slot);
+      fi.free.push(f.slot);
+    }
     this.flowers = this.flowers.filter(x => x.id !== f.id);
   }
 
@@ -1766,7 +1831,8 @@ export class World {
 
   // ---------- 帧更新 ----------
   private waterT = 0;
-  update(dt: number, _time24: number, isNight: boolean, now: number) {
+  // decoSkip：VR 保帧率时隔帧跳过纯装饰动画（花瓣/萤火虫），物理与交互不受影响
+  update(dt: number, _time24: number, isNight: boolean, now: number, decoSkip = false) {
     // 水面流动
     this.waterT += dt * 0.02;
     (this.water.material as THREE.MeshLambertMaterial).map!.offset.set(this.waterT, this.waterT * 0.6);
@@ -1855,17 +1921,19 @@ export class World {
     for (const l of this.lamps) l.intensity = nightF * 2.4;
     for (const pm of this.lampPools) pm.opacity = nightF * 0.45;
     for (const b of this.lampBulbs) b.emissive.set(isNight ? 0xffd9a0 : 0x000000);
-    // 花瓣飘落
-    const pp = this.petals.geometry.attributes.position as THREE.BufferAttribute;
-    for (let i = 0; i < pp.count; i++) {
-      let y = pp.getY(i) - dt * 0.5;
-      let x = pp.getX(i) + Math.sin(now * 0.001 + i) * dt * 0.6;
-      if (y < 0.3) { y = 6 + Math.random() * 5; x = (Math.random() - 0.5) * 220; pp.setZ(i, (Math.random() - 0.5) * 220); }
-      pp.setY(i, y); pp.setX(i, x);
+    // 花瓣飘落（纯装饰，VR 保帧率时隔帧跳过；跳过的帧用双倍 dt 补偿节奏）
+    if (!decoSkip) {
+      const pp = this.petals.geometry.attributes.position as THREE.BufferAttribute;
+      for (let i = 0; i < pp.count; i++) {
+        let y = pp.getY(i) - dt * 0.5;
+        let x = pp.getX(i) + Math.sin(now * 0.001 + i) * dt * 0.6;
+        if (y < 0.3) { y = 6 + Math.random() * 5; x = (Math.random() - 0.5) * 220; pp.setZ(i, (Math.random() - 0.5) * 220); }
+        pp.setY(i, y); pp.setX(i, x);
+      }
+      pp.needsUpdate = true;
     }
-    pp.needsUpdate = true;
     // 萤火虫漂移
-    if (isNight) {
+    if (isNight && !decoSkip) {
       const fp = this.fireflies.geometry.attributes.position as THREE.BufferAttribute;
       for (let i = 0; i < fp.count; i++) {
         fp.setX(i, fp.getX(i) + Math.sin(now * 0.0007 + i * 2) * dt * 0.8);

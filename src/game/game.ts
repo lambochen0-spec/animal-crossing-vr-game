@@ -48,6 +48,8 @@ export class Game {
   private camper: { id: string; startDay: number; task: { item: string; need: number } | null } | null = null;
   private lastCampDay = 0;                     // 上次出现露营者的日期戳
   private lastDayTick = 0;                     // 跨天检测用
+  private frameNo = 0;                          // 帧计数（VR 装饰动画隔帧用）
+  private cullT = -1;                           // VR 距离剔除计时（-1 = 未激活）
   private strength = 0;                        // 吃水果获得的力气（用于铲起整棵树）
   private shovelLevel = 1;                     // 铲子等级：1普通（一层）2铜铲（二层）3铁铲（三层）
   private mineFloor = 1;                       // 当前矿洞层数
@@ -380,13 +382,19 @@ export class Game {
       setViewYaw: (yaw) => { this.camYaw = yaw; },
       onVrSwing: () => {
         if (store.state.dialog || store.state.shopOpen) return;
-        // 挥臂是使用工具的动作：面前是宝可梦/NPC 等对话类目标时不触发（走路摆臂误触发对话的修复）
+        // 挥臂 = 使用工具的动作，只执行工具类命中（摇树/挖矿/敲石/捕虫/挖宝/拔草/摘花/钓鱼）；
+        // 进屋/开店/对话/睡觉等走近交互一律归扳机——否则走路摆臂会误进屋、误开界面锁死移动
         const it = this.findInteract();
-        if (it && ['villager', 'nook', 'isabelle', 'camper', 'owl'].includes(it.kind)) return;
         this.swingArm();
+        if (it && Game.VR_SWING_KINDS.has(it.kind)) this.interact();
+      },
+      onVrTrigger: () => {
+        if (store.state.dialog || store.state.shopOpen) return;
+        // 工具类动作必须「扳机+挥臂」（咬钩收竿除外，留给本能反应），扳机单独扣只执行非工具交互
+        const it = this.findInteract();
+        if (it && Game.VR_SWING_KINDS.has(it.kind) && it.kind !== 'reel') return;
         this.interact();
       },
-      onVrTrigger: () => { if (!store.state.dialog && !store.state.shopOpen) this.interact(); },
       onCycleTool: (dir) => {
         const list = (['hand', 'net', 'rod', 'shovel', 'axe'] as ToolId[]).filter(t => this.unlockedTools.has(t));
         const i = list.indexOf(this.tool);
@@ -429,6 +437,18 @@ export class Game {
           if (v) it = { kind: 'villager', prompt: '', dist: 0, target: v };
         }
         if (it) this.doInteract(it);
+      },
+      // 宝可梦实时位置（VR 手机地图页；视距近，靠地图找人）
+      getMapMarkers: () => {
+        const out: { name: string; x: number; z: number; color: string }[] = [];
+        for (const v of this.villagers) {
+          if (!v.group.visible || v === this.camperVillager) continue;
+          out.push({ name: v.def.name, x: v.group.position.x, z: v.group.position.z, color: '#ffd34d' });
+        }
+        if (this.isabelle.group.visible) out.push({ name: '皮卡丘', x: this.isabelle.group.position.x, z: this.isabelle.group.position.z, color: '#ffe25a' });
+        if (this.nook.group.visible) out.push({ name: '喵喵', x: this.nook.group.position.x, z: this.nook.group.position.z, color: '#c89bff' });
+        if (this.camperVillager?.group.visible) out.push({ name: this.camperVillager.def.name, x: this.camperVillager.group.position.x, z: this.camperVillager.group.position.z, color: '#7fd97f' });
+        return out;
       },
     });
     this.lastT = performance.now();
@@ -2511,6 +2531,8 @@ export class Game {
 
   // 修理通往矿岛的断桥：木材×10 + 石头×10 + 金币×3000
   private static BRIDGE_COST = { wood: 10, stone: 10, bells: 3000 };
+  // VR 挥臂允许触发的交互类型（工具类动作）；其余走近交互只走扳机
+  private static VR_SWING_KINDS = new Set(['ore', 'bug', 'dig', 'rock', 'weed', 'flower', 'shovelFlower', 'digTree', 'tree', 'fish', 'reel']);
   private repairBridge() {
     const need = Game.BRIDGE_COST;
     const lack: string[] = [];
@@ -3141,8 +3163,7 @@ export class Game {
   private slowFrames = 0;
   private lowQuality = false;
 
-  // Three.js setAnimationLoop 传入 (time, frame)，frame 是 XRFrame（仅在 VR 中非 null）
-  private loop = (_time: number, xrFrame?: XRFrame) => {
+  private loop = () => {
     if (this.disposed) return;
     const now = performance.now();
     let dt = (now - this.lastT) / 1000;
@@ -3173,9 +3194,9 @@ export class Game {
     // 跨天检测：露营考察者到达/离开
     const today = this.dayStamp();
     if (today !== this.lastDayTick) { this.lastDayTick = today; this.updateCamp(); }
-    if (this.vrSys.active) this.vrSys.update(dt, now, xrFrame); // VR：踏步移动/挥臂/面板（会写入 touchInput 与 camYaw）
+    if (this.vrSys.active) this.vrSys.update(dt, now); // VR：踏步移动/挥臂/面板（会写入 touchInput 与 camYaw）
     this.updatePlayer(dt);
-    if (this.vrSys.active) this.vrSys.syncRigPosition(); // 同步 rig 到最新 playerPos，消除帧滞后
+    if (this.vrSys.active) this.vrSys.syncRig(); // VR：rig 贴本帧最新玩家位置（滞后一帧会致场景跟晃）
     this.updateBoat(dt);
     if (!this.partyActive) this.updateVillagers(dt);
     this.updateFishing(dt);
@@ -3183,7 +3204,28 @@ export class Game {
 
     const isNight = this.time24 < 5.5 || this.time24 >= 19.5;
     this.world.lureFish = this.luredFish;
-    this.world.update(dt, this.time24, isNight, now);
+    this.frameNo++;
+    this.world.update(dt, this.time24, isNight, now, this.vrSys.active && this.frameNo % 2 === 1); // VR 隔帧跳过装饰动画保帧率
+    // VR 距离剔除：75m 外的小物件直接隐藏（雾里本来也看不清）；退出 VR 全部恢复
+    if (this.vrSys.active) {
+      this.cullT -= dt;
+      if (this.cullT <= 0) {
+        this.cullT = 0.6;
+        const p = this.playerPos;
+        const far2 = 32 * 32; // 雾外即隐（视距 35m）
+        const cull = (x: number, z: number, o: THREE.Object3D) => {
+          o.visible = (p.x - x) ** 2 + (p.z - z) ** 2 < far2;
+        };
+        for (const pk of this.world.pickups) cull(pk.mesh.position.x, pk.mesh.position.z, pk.mesh);
+        for (const b of this.world.bugs) cull(b.group.position.x, b.group.position.z, b.group);
+        for (const d of this.world.digSpots) cull(d.x, d.z, d.mesh);
+      }
+    } else if (this.cullT !== -1) {
+      this.cullT = -1;
+      for (const pk of this.world.pickups) pk.mesh.visible = true;
+      for (const b of this.world.bugs) b.group.visible = true;
+      for (const d of this.world.digSpots) d.mesh.visible = true;
+    }
 
     // 提示刷新（低频）
     if (Math.floor(this.elapsed * 8) !== Math.floor((this.elapsed - dt) * 8)) {
@@ -4199,9 +4241,17 @@ export class Game {
     {
       const px = this.playerPos.x, pz = this.playerPos.z;
       const rain = this.weather === 'rain';
-      // VR 远裁剪面只有 130m：天体整体拉近，避免被裁掉露出黑边（视觉上仍是无穷远）
-      const ck = this.vrSys?.active ? 0.45 : 1;
+      // VR 远裁剪面只有 35m：天体整体拉近（ck 0.14 → 约 29m，盘同步缩小保持视角大小），
+      // 云直接去掉、星星只画 1/3——保帧率
+      const vr = !!this.vrSys?.active;
+      const ck = vr ? 0.14 : 1;
       this.stars.scale.setScalar(ck);
+      const starTotal = this.stars.geometry.attributes.position.count;
+      this.stars.geometry.setDrawRange(0, vr ? Math.floor(starTotal / 3) : starTotal);
+      for (const c of this.clouds) c.visible = !vr;
+      this.sunDisc.scale.setScalar(vr ? 0.31 : 1);
+      this.sunGlow.scale.setScalar(vr ? 0.31 : 1);
+      this.moonDisc.scale.setScalar(vr ? 0.31 : 1);
       // 太阳：6 点升起、18 点落下（位置跟着玩家，永远可见于天际）
       const sunShow = sy > -0.12 && !rain;
       this.sunDisc.visible = this.sunGlow.visible = sunShow;
