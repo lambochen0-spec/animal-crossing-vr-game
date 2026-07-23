@@ -349,7 +349,7 @@ export class VRSystem {
 
   // ---------------- 每帧更新（由 Game 主循环调用）----------------
   private drAcc = 0; private drN = 0; private drCd = 0; private curPR = 0.65;
-  update(dt: number, now: number) {
+  update(dt: number, now: number, xrFrame?: XRFrame) {
     if (!this.active) return;
     const { camera, playerPos } = this.host;
     // 动态分辨率：平均帧时间过长就继续降像素比，宽裕则回升（0.5~0.8 之间浮动）
@@ -383,7 +383,22 @@ export class VRSystem {
     }
     this.prevViewYaw = viewYaw;
     this.prevPitch = headPitch;
-    this.march.update(camera.position.x, camera.position.z, now / 1000, dt);
+    // 从 XR Frame 直接读头部位置（Babylon.js 方式），而不是从 camera.position（Three.js 延迟一帧）
+    let headX = camera.position.x, headZ = camera.position.z;
+    if (xrFrame && this.session) {
+      try {
+        const refSpace = this.host.renderer.xr.getReferenceSpace();
+        if (refSpace) {
+          const pose = xrFrame.getViewerPose(refSpace);
+          if (pose) {
+            const m = pose.transform.matrix;
+            headX = m[12];
+            headZ = m[14];
+          }
+        }
+      } catch { /* fallback to camera.position */ }
+    }
+    this.march.update(headX, headZ, now / 1000, dt);
     this.applyLocomotion(viewYaw, dt);
     // 手柄按键（摇杆快速转向 + A/B 切工具）
     this.pollGamepads(dt);
