@@ -182,7 +182,7 @@ export function GameUI() {
       </div>
 
       {/* VR 入口：检测到 VR 设备时显示 */}
-      {hud.vrSupported && !hud.vrActive && (!hud.titleStage || hud.titleStage === 'menu') && (
+      {hud.vrSupported && !hud.vrActive && hud.titleStage === null && (
         <button
           onClick={() => (window as unknown as { __game?: { enterVRNow(): void } }).__game?.enterVRNow()}
           className="pointer-events-auto absolute top-16 right-3 rounded-2xl bg-indigo-600/90 text-white font-bold px-4 py-2.5 shadow-lg hover:bg-indigo-500"
