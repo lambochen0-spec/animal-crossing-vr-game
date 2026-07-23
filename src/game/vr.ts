@@ -33,75 +33,74 @@ export interface VRHost {
 // 检测水平位置「离开→到达峰值→返回原点附近」这样一个周期 = 一步。
 // 水平摆动幅度远大于Quest头显的垂直晃动，识别更可靠。
 export class MarchDetector {
-  // 采样
+  // 环形缓冲区（20个采样 @ 15 FPS ≈ 1.3秒窗口，跟Babylon一致）
   private buf: { x: number; z: number }[] = [];
-  private readonly SAMPLE_DT = 1 / 30;
+  private readonly SAMPLE_DT = 1 / 15;
   private sampleT = 0;
 
-  // 原点 + 摆动状态
-  private ox = 0; private oz = 0;
-  private originSet = false;
-  private moving = false;
-  private peakDist = 0;
-  private debugT = 0;
-  private toastCb: ((msg: string) => void) | null = null;
+  // 熵检测：防止随机晃头被当成踏步
+  private entropy = 0;
 
-  setToastCb(cb: (msg: string) => void) { this.toastCb = cb; }
-
-  private stepTs: number[] = [];      // 步时间戳
+  private stepTs: number[] = [];
 
   private smoothSpeed = 0;
   speed = 0;
   running = false;
 
+  private debugT = 0;
+  private toastCb: ((msg: string) => void) | null = null;
+
+  setToastCb(cb: (msg: string) => void) { this.toastCb = cb; }
+
   disturb() {}
 
   update(headX: number, headZ: number, t: number, dt: number) {
-    // 固定频率采样
+    // 固定 15 FPS 采样
     this.sampleT += dt;
     this.sampleT = Math.min(this.sampleT, this.SAMPLE_DT * 3);
     if (this.sampleT < this.SAMPLE_DT) return;
     this.sampleT -= this.SAMPLE_DT;
 
-    // 首次：设原点
-    if (!this.originSet) {
-      this.ox = headX; this.oz = headZ;
-      this.originSet = true;
-      return;
-    }
+    this.buf.push({ x: headX, z: headZ });
+    if (this.buf.length > 20) this.buf.shift();
+    if (this.buf.length < 7) return;
 
-    // 距原点的距离
-    const dx = headX - this.ox;
-    const dz = headZ - this.oz;
-    const dist = Math.sqrt(dx * dx + dz * dz);
+    // ---- 熵检测：连续两帧距离累积，过大则放弃（随机晃头 vs 稳定踏步） ----
+    const origin = this.buf[0];
+    const dx1 = origin.x - this.buf[1].x;
+    const dz1 = origin.z - this.buf[1].z;
+    const d1 = Math.sqrt(dx1 * dx1 + dz1 * dz1);
+    this.entropy = this.entropy * 0.93 + d1;
+    if (this.entropy > 0.4) return;
 
-    // 调试：每 0.5s 通过 toast 显示头部位置数据（仅在 VR 模式下可见）
-    this.debugT += this.sampleT;
-    if (this.debugT > 0.5 && this.toastCb) {
-      this.debugT = 0;
-      this.toastCb(`头位置 X:${(headX*100).toFixed(0)}cm Z:${(headZ*100).toFixed(0)}cm | 离原点${(dist*100).toFixed(0)}cm | 摆动${this.moving?'是':'否'} | 波峰${(this.peakDist*100).toFixed(0)}cm`);
-    }
+    // ---- 扫描缓冲区：找"出去又回来"的完整摆动 ----
+    // 从第 1/3 处开始找回归点（跳过刚起动的几帧）
+    const startIdx = Math.floor(this.buf.length / 3);
+    for (let sameIdx = startIdx; sameIdx < this.buf.length; sameIdx++) {
+      const dx = origin.x - this.buf[sameIdx].x;
+      const dz = origin.z - this.buf[sameIdx].z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
 
-    if (dist > this.peakDist) this.peakDist = dist;
+      if (dist < 0.03) {
+        // 找到了一个"回归点"（距起点 < 3cm）
+        // 在起点和回归点之间找波峰
+        let apexDist = 0;
+        for (let k = 1; k < sameIdx; k++) {
+          const ax = this.buf[k].x - origin.x;
+          const az = this.buf[k].z - origin.z;
+          const ad = Math.sqrt(ax * ax + az * az);
+          if (ad > apexDist) apexDist = ad;
+        }
 
-    if (this.moving) {
-      // 正在摆动中 → 检测是否回到了原点附近
-      if (dist < 0.02) {
-        // 回到原点 → 记一步（峰值至少 3cm 才算有效）
-        if (this.peakDist >= 0.03) {
+        // 波峰必须 >= 9cm
+        if (apexDist >= 0.09) {
+          // 记一步
           this.stepTs.push(t);
           if (this.stepTs.length > 8) this.stepTs.shift();
+          // 清除已处理的采样，避免重复检测同一摆动
+          this.buf.splice(0, sameIdx);
         }
-        this.ox = headX; this.oz = headZ;
-        this.moving = false;
-        this.peakDist = 0;
-      }
-    } else {
-      // 静止中 → 检测远离原点（低门槛 2cm），把当前位置设为新原点
-      if (dist >= 0.02) {
-        this.ox = headX; this.oz = headZ;  // ← 关键修复：开始摆动时重置原点
-        this.moving = true;
-        this.peakDist = 0;                  // 从新原点重新算波峰
+        break; // 一次只检测一个摆动
       }
     }
 
@@ -117,20 +116,25 @@ export class MarchDetector {
       }
     }
 
-    // 平滑
+    // 速度平滑
     const k = target > this.smoothSpeed ? 10 : 20;
     this.smoothSpeed += (target - this.smoothSpeed) * Math.min(1, dt * k);
     if (this.smoothSpeed < 0.05) this.smoothSpeed = 0;
     this.speed = this.smoothSpeed;
 
-    // 超时
+    // 调试 toast：每 0.5s 显示一次
+    this.debugT += this.sampleT;
+    if (this.debugT > 0.5 && this.toastCb) {
+      this.debugT = 0;
+      this.toastCb(`缓冲区${this.buf.length}帧 步数${this.stepTs.length} 速度${(this.speed*100).toFixed(0)} 熵${this.entropy.toFixed(2)}`);
+    }
+
+    // 超过 2 秒没新步 → 清零
     if (this.stepTs.length > 0 && t - this.stepTs[this.stepTs.length - 1] > 2) {
       this.stepTs = [];
       this.smoothSpeed = 0;
       this.running = false;
-      this.moving = false;
-      this.originSet = false;
-      this.peakDist = 0;
+      this.entropy = 0;
     }
   }
 }
