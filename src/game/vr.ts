@@ -10,6 +10,8 @@ import { store, commands } from './store';
 
 import { ITEMS } from './data';
 
+import { makeFruitDrop, makePokeBall } from './items3d';
+
 
 
 // 宿主（Game）提供给 VR 系统的接口
@@ -539,6 +541,11 @@ export class VRSystem {
 
   private entering = false;
 
+  // VR 专属物品显示：玩家 group.visible=false 让 heldItem 不可见，
+  // VR 时把物品移到右手 controller（rig 子物体）→ 永远可见
+  private vrHeldItem: THREE.Group | null = null;
+  private vrHeldId: string | null = null;
+
   private savedFar = 600;
 
   private savedFog: [number, number] | null = null;
@@ -558,6 +565,12 @@ export class VRSystem {
     scene.add(this.rig);
 
     this.rig.add(camera);
+
+    // VR 时物品挂右手 controller（玩家看不见时物品还能看见）
+    this.vrHeldItem = new THREE.Group();
+    this.vrHeldItem.position.set(0, -0.06, -0.12);
+    this.vrHeldItem.rotation.set(-0.3, 0, 0);
+    this.attachVrHeldItem();
 
     camera.position.set(0, 0, 0);
 
@@ -666,6 +679,28 @@ export class VRSystem {
     this.refreshToolMesh(true);
 
   }
+
+  // 把 vrHeldItem 挂到右手 controller（controllers[1]）
+  private attachVrHeldItem() {
+    if (!this.vrHeldItem) return;
+    const rc = this.controllers[1];
+    if (!rc) return;
+    rc.add(this.vrHeldItem);
+    // 同步当前 selectedItem
+    const sel = this.host.getSelectedItem?.();
+    if (sel !== undefined) this.setVrHeld(sel);
+  }
+
+  // 更新 VR 时手上物品（game.ts 在 selectItem 后调 setHeldItem 时同时调这里）
+  setVrHeld(item: string | null) {
+    if (!this.vrHeldItem) return;
+    this.vrHeldItem.clear();
+    this.vrHeldId = item;
+    if (!item) return;
+    const isFruit = item === 'apple' || item === 'cherry' || item === 'orange' || item === 'peach';
+    this.vrHeldItem.add(isFruit ? makeFruitDrop(item, 0.9) : makePokeBall(0.85));
+  }
+
 
 
 
