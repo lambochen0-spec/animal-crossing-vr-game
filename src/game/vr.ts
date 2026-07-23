@@ -90,17 +90,14 @@ export class MarchDetector {
     // 只保留跑步档：第一步低速起步，第二步确认节奏后提全速；步幅最高 3.8 米/秒
     let target = 0;
     if (this.rhythm >= 1 && t - this.lastStepAt < 1.5) {
-      if (this.goodIv === 0) {
-        target = 0.9; // 第一步：缓冲低速，第二步确认后提速
-      } else {
-        const hz = 1 / this.goodIv;
-        if (hz >= 2.0) {
-          target = this.rhythm >= 2 ? Math.min(3.8, 0.8 + (hz - 2.0) * 2.0) : 1.2;
-          this.running = hz >= 2.6;
-        } else if (hz >= 0.6) {
-          target = 0.5 + (hz - 0.6) * 0.5;
-          this.running = false;
-        }
+      // 一步就动：第一步用默认步频0.8s算速度，后面用实际步频
+      const hz = this.goodIv === 0 ? 1.25 : 1 / this.goodIv;
+      if (hz >= 2.0) {
+        target = Math.min(3.8, 0.8 + (hz - 2.0) * 2.0);
+        this.running = hz >= 2.6;
+      } else if (hz >= 0.6) {
+        target = 0.5 + (hz - 0.6) * 0.5;
+        this.running = false;
       }
     } else this.running = false;
     // 快速启停（起步/停步都要跟脚）
