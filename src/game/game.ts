@@ -379,7 +379,7 @@ export class Game {
       camera: this.camera,
       playerPos: this.playerPos,
       groundY: (x, z) => groundHeight(x, z),
-      setViewYaw: (yaw) => { this.camYaw = yaw; },
+      setViewYaw: (yaw) => { this.camYaw = yaw; this.playerYaw = yaw; },
       onVrSwing: () => {
         if (store.state.dialog || store.state.shopOpen) return;
         // 挥臂 = 使用工具的动作，只执行工具类命中（摇树/挖矿/敲石/捕虫/挖宝/拔草/摘花/钓鱼）；
@@ -952,13 +952,10 @@ export class Game {
 
   // VR 按钮直启：不经过命令队列（头显浏览器要求用户手势立即触发，隔帧会被静默拒绝）
   enterVRNow() {
-    console.log('[enterVRNow] called, titleStage=', store.state.titleStage, 'hasSave=', store.state.hasSave);
     if (store.state.titleStage) {
-      console.log('[enterVRNow] 走 startFromTitle 路径');
       this.startFromTitle(!store.state.hasSave);
       setTimeout(() => void this.vrSys.enter(), 1200);
     } else {
-      console.log('[enterVRNow] 直接进 vrSys.enter()');
       void this.vrSys.enter();
     }
   }
@@ -1558,7 +1555,14 @@ export class Game {
     }
     this.tool = t;
     this.player.setTool(t);
-    this.player.setHeldItem(t === 'hand' ? this.selectedItem : null); // 切工具时收起手中物品
+    if (t === 'hand') {
+      this.player.setHeldItem(this.selectedItem); // 切回空手显示手上物品
+    } else {
+      this.player.setHeldItem(null); // 切工具时收起 + 取消选择（问题 2 修复）
+      this.selectedItem = null;
+      // VR 同步：手上物品清空
+      if (this.vrSys?.active) this.vrSys.setVrHeld?.(null);
+    }
     if (t !== 'rod' && this.fishState !== 'idle') this.cancelFishing();
     sfx.ui();
     this.syncHud();
@@ -3613,6 +3617,7 @@ export class Game {
           this.selectedItem = c.item;
           if (c.item) this.setTool('hand');
           this.player.setHeldItem(c.item); // 物品拿在手上（水果/精灵球形态）
+          if (this.vrSys && this.vrSys.active) this.vrSys.setVrHeld?.(c.item); // VR 时同步到 vrHeldItem
           this.syncHud();
           break;
         case 'interact': this.interactDown(); break;
