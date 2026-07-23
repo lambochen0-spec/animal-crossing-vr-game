@@ -399,6 +399,11 @@ export class World {
   fireflies!: THREE.Points;
   petals!: THREE.Points;
   private nextId = 1;
+  /** 由外部（game.ts）设置以启用树实例视锥体裁剪 */
+  camera: THREE.PerspectiveCamera | null = null;
+  private _frustum = new THREE.Frustum();
+  private _sphere = new THREE.Sphere();
+  private _projScreenMatrix = new THREE.Matrix4();
   private leafMat: THREE.Material;
   private trunkMat: THREE.Material;
   private flowerMats: Record<string, THREE.Material> = {};
@@ -783,6 +788,7 @@ export class World {
       const im = new THREE.InstancedMesh(unit.clone(), mat, cap);
       im.castShadow = true;
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      im.instanceFrustumCulled = true;
       for (let i = 0; i < cap; i++) im.setMatrixAt(i, zero);
       im.instanceMatrix.needsUpdate = true;
       this.group.add(im);
@@ -809,8 +815,6 @@ export class World {
     if (t.instSlot >= 0 || !this.freeTreeSlots.length) return;
     t.instSlot = this.freeTreeSlots.pop()!;
     this.writeTreeInstances(t);
-    this.trunkI.instanceMatrix.needsUpdate = true;
-    for (const l of this.leafI) l.instanceMatrix.needsUpdate = true;
     if (t.fruitId) this.growFruits(t);
   }
 
@@ -819,6 +823,7 @@ export class World {
     const i = t.instSlot;
     if (i < 0) return;
     this.setInst(this.trunkI, i, t.x, t.gy + t.trunkH / 2, t.z, 0.8 * t.s, t.trunkH, 0.8 * t.s);
+    this.trunkI.instanceMatrix.needsUpdate = true;
     this.imE.set(rx, 0, rz);
     this.imQ.setFromEuler(this.imE);
     this.imPivot.set(0, t.trunkH, 0); // 支点：树冠底部
@@ -833,6 +838,7 @@ export class World {
         this.imS.set(ls * t.s, ls * 0.8 * t.s, ls * t.s),
       );
       this.leafI[li].setMatrixAt(i, this.imM);
+      this.leafI[li].instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -1837,6 +1843,46 @@ export class World {
     this.waterT += dt * 0.02;
     (this.water.material as THREE.MeshLambertMaterial).map!.offset.set(this.waterT, this.waterT * 0.6);
 
+    // ---- 树实例视锥体裁剪（VR 保帧率核心：减少 GPU vertex shader 调用） ----
+    // 外部设置 this.camera 后启用；Three.js instanceFrustumCulled 自动生效（render 时剔除）
+    if (this.camera) {
+      this.camera.updateMatrixWorld(true);
+      this._projScreenMatrix.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+      this._frustum.setFromProjectionMatrix(this._projScreenMatrix);
+
+      // 筛选可见树（树冠半径 ≈ 3m，用 4m 球体）
+      const visible: Tree[] = [];
+      for (const t of this.trees) {
+        this._sphere.set(new THREE.Vector3(t.x, t.gy + t.trunkH * 0.6, t.z), 4);
+        if (this._frustum.intersectsSphere(this._sphere)) visible.push(t);
+      }
+
+      if (visible.length < this.trees.length) {
+        // 保存原始 instSlot 后再重排，确保所有共享 InstancedMesh 一致性
+        const origSlots = visible.map(t => t.instSlot);
+        const tmp = this.imM;
+
+        // trunkI：可见实例搬到数组前部
+        for (let i = 0; i < visible.length; i++) {
+          const src = origSlots[i];
+          if (src !== i) { this.trunkI.getMatrixAt(src, tmp); this.trunkI.setMatrixAt(i, tmp); }
+          visible[i].instSlot = i;
+        }
+        this.trunkI.count = visible.length;
+        this.trunkI.instanceMatrix.needsUpdate = true;
+
+        // leafI[0..3]：同步重排
+        for (const l of this.leafI) {
+          for (let i = 0; i < visible.length; i++) {
+            const src = origSlots[i];
+            if (src !== i) { l.getMatrixAt(src, tmp); l.setMatrixAt(i, tmp); }
+          }
+          l.count = visible.length;
+          l.instanceMatrix.needsUpdate = true;
+        }
+      }
+    }
+
     // 树摇摆 & 结果（实例矩阵更新）
     for (const t of this.trees) {
       if (t.shakeT > 0) {
@@ -1846,7 +1892,6 @@ export class World {
         } else {
           this.writeTreeInstances(t, Math.sin(t.shakeT * 40) * 0.07 * t.shakeT, Math.cos(t.shakeT * 34) * 0.05 * t.shakeT);
         }
-        for (const l of this.leafI) l.instanceMatrix.needsUpdate = true;
       }
       if (t.fruits.length === 0 && t.regrowT > 0) {
         t.regrowT -= dt;
