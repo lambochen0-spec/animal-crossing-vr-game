@@ -36,7 +36,7 @@ export class MarchDetector {
   // 环形缓冲区（20个采样点 @ 15 FPS ≈ 1.3秒窗口）
   private buf: { x: number; z: number }[] = [];
   private readonly MAX_N = 20;
-  private readonly SAMPLE_DT = 1 / 15;
+  private readonly SAMPLE_DT = 1 / 30;
   private sampleT = 0;
 
   // 步检测状态
@@ -95,20 +95,15 @@ export class MarchDetector {
     }
     this.prevSwing = swing;
 
-    // ---- 步频 → 目标速度 ----
+    // ---- 步频 → 目标速度（第一步就动，默认步频 1.25 Hz ≈ 每秒1.25步） ----
     let target = 0;
-    if (this.stepTs.length >= 2) {
-      const span = this.stepTs[this.stepTs.length - 1] - this.stepTs[0];
-      const n = this.stepTs.length - 1;
-      if (span > 0) {
-        const avgIv = span / n;
-        if (avgIv > 0) {
-          const hz = 1 / avgIv; // 步频（步/秒）
-          if (hz >= 0.6) {
-            target = Math.min(3.0, 0.5 + hz * 0.6);
-            this.running = hz >= 2.2;
-          }
-        }
+    if (this.stepTs.length >= 1) {
+      const hz = this.stepTs.length >= 2
+        ? 1 / ((this.stepTs[this.stepTs.length - 1] - this.stepTs[0]) / (this.stepTs.length - 1))
+        : 1.25;
+      if (hz >= 0.6) {
+        target = Math.min(3.0, 0.5 + hz * 0.6);
+        this.running = hz >= 2.2;
       }
     }
 
@@ -234,6 +229,7 @@ export class VRSystem {
       const r = this.host.renderer;
       r.xr.enabled = true;
       r.xr.setReferenceSpaceType('local-floor');
+      r.xr.setFoveation(0.3); // 降低固定注视点渲染强度，消除边缘分界线
       // VR 减负：降渲染分辨率 + 缩短视距（大世界立体渲染是卡顿主因，远裁剪直接少画一半物体）
       this.savedPixelRatio = r.getPixelRatio();
       r.setPixelRatio(Math.min(0.65, this.savedPixelRatio));
@@ -360,10 +356,10 @@ export class VRSystem {
     if (this.drCd <= 0 && this.drN > 10) {
       const avg = this.drAcc / this.drN;
       this.drAcc = 0; this.drN = 0; this.drCd = 2;
-      if (avg > 0.024 && this.curPR > 0.5) {
+      if (avg > 0.016 && this.curPR > 0.5) {
         this.curPR = Math.max(0.5, this.curPR - 0.1);
         this.host.renderer.setPixelRatio(this.curPR);
-      } else if (avg < 0.014 && this.curPR < 0.8) {
+      } else if (avg < 0.009 && this.curPR < 0.8) {
         this.curPR = Math.min(0.8, this.curPR + 0.05);
         this.host.renderer.setPixelRatio(this.curPR);
       }
