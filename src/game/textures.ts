@@ -153,7 +153,7 @@ export function flowerSvgTexture(petal: string, center: string): THREE.CanvasTex
     + `<circle cx="32" cy="25" r="6" fill="${center}" stroke="rgba(0,0,0,0.15)" stroke-width="1"/>`
     + `</svg>`;
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 128;
+  canvas.width = canvas.height = 64;
   const ctx = canvas.getContext('2d')!;
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
@@ -213,7 +213,7 @@ export function tentDoorSvgTexture(): THREE.CanvasTexture {
     + `<rect x="11" y="61" width="42" height="3" rx="1" fill="#8a6239"/>`                        // 门槛
     + `</svg>`;
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 128;
+  canvas.width = canvas.height = 64;
   const ctx = canvas.getContext('2d')!;
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
