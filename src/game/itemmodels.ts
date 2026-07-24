@@ -13,7 +13,7 @@ function setTexture(setId: string): THREE.CanvasTexture | null {
   const hit = setTexCache.get(setId);
   if (hit) return hit;
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 128;
+  canvas.width = canvas.height = 64;
   const ctx = canvas.getContext('2d')!;
   ctx.fillStyle = def.c1; ctx.fillRect(0, 0, 128, 128); // 解码前先铺主色
   const tex = new THREE.CanvasTexture(canvas);
