@@ -77,7 +77,7 @@ export function itemSvgTexture(id: string, shape?: string, c1?: string, c2?: str
   const hit = texCache.get(key);
   if (hit) return hit;
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 128;
+  canvas.width = canvas.height = 64;
   const ctx = canvas.getContext('2d')!;
   const tex = new THREE.CanvasTexture(canvas);
   const img = new Image();
