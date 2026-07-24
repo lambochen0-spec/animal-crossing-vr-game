@@ -158,7 +158,7 @@ export function flowerSvgTexture(petal: string, center: string): THREE.CanvasTex
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
   const img = new Image();
-  img.onload = () => { ctx.drawImage(img, 0, 0, 128, 128); tex.needsUpdate = true; };
+  img.onload = () => { ctx.drawImage(img, 0, 0, 64, 64); tex.needsUpdate = true; };
   img.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
   return tex;
 }
