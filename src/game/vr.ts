@@ -1478,7 +1478,7 @@ export class VRSystem {
 
     const ctx = this.wristCtx;
     ctx.save();
-    ctx.scale(2, 2); // 贴图坐标系 ×2 缩放（旧坐标按原尺寸写）
+    ctx.scale(0.5, 0.5); // 贴图坐标系 ×0.5 缩放（旧坐标按原尺寸写）
 
     const s = store.state;
 
@@ -1628,7 +1628,7 @@ export class VRSystem {
 
     const ctx = this.phoneCtx;
     ctx.save();
-    ctx.scale(2, 2); // 贴图从 512×720 降到 256×360，所有坐标系 ×2 缩放
+    ctx.scale(0.5, 0.5); // 贴图从 512×720 降到 256×360，所有坐标系 ×0.5 缩放
 
 
     const s = store.state;
@@ -1706,7 +1706,7 @@ export class VRSystem {
   private drawPhoneMap(ctx: CanvasRenderingContext2D, s: typeof store.state) {
 
     ctx.save();
-    ctx.scale(2, 2); // 贴图坐标系 ×2 缩放（旧坐标按原尺寸写）
+    ctx.scale(0.5, 0.5); // 贴图坐标系 ×0.5 缩放（旧坐标按原尺寸写）
     // 地图图片（游戏内地图同一张）
 
     if (s.mapImage && s.mapImage !== this.mapImgSrc) {
@@ -1798,7 +1798,7 @@ export class VRSystem {
   private drawPhoneBag(ctx: CanvasRenderingContext2D, _s: typeof store.state) {
 
     ctx.save();
-    ctx.scale(2, 2); // 贴图坐标系 ×2 缩放（旧坐标按原尺寸写）
+    ctx.scale(0.5, 0.5); // 贴图坐标系 ×0.5 缩放（旧坐标按原尺寸写）
     const inv = this.host.getInventory().filter(([, n]) => n > 0);
 
     ctx.fillStyle = '#8fa8c8';
@@ -1880,7 +1880,7 @@ export class VRSystem {
   private drawPhoneTool(ctx: CanvasRenderingContext2D, s: typeof store.state) {
 
     ctx.save();
-    ctx.scale(2, 2); // 贴图坐标系 ×2 缩放（旧坐标按原尺寸写）
+    ctx.scale(0.5, 0.5); // 贴图坐标系 ×0.5 缩放（旧坐标按原尺寸写）
     const tools: [string, string, string][] = [
 
       ['hand', '✋', '空手'], ['net', '🥅', '捕虫网'], ['rod', '🎣', '钓竿'], ['shovel', '⛏️', '铲子'], ['axe', '🪓', '斧头'],
@@ -2165,7 +2165,7 @@ export class VRSystem {
     const ctx = this.dialogCtx;
 
     ctx.save();
-    ctx.scale(2, 2); // 贴图从 1024×512 降到 512×256，所有坐标 ×2 缩放
+    ctx.scale(0.5, 0.5); // 贴图从 1024×512 降到 512×256，所有坐标 ×0.5 缩放
     ctx.clearRect(0, 0, 1024, 512);
 
     ctx.fillStyle = 'rgba(255,250,238,0.97)';
