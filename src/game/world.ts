@@ -396,6 +396,7 @@ export class World {
   stars!: THREE.Points;
   moon!: THREE.Sprite;
   moonLight!: THREE.DirectionalLight;
+  vrMode = false;  // VR 模式标志（game.ts 设置，用于抑制光照）
   fireflies!: THREE.Points;
   petals!: THREE.Points;
   private nextId = 1;
@@ -1913,7 +1914,7 @@ export class World {
         const s = 1 + Math.sin(t * (6 + i * 1.7) + i * 2.1) * 0.12;
         f.scale.set(s, 1 + Math.sin(t * (7 + i) + i) * 0.18, s);
       });
-      if (this.bonfireLight) this.bonfireLight.intensity = 2.2 + Math.sin(t * 8) * 0.4;
+      if (this.bonfireLight) this.bonfireLight.intensity = this.vrMode ? 0 : (2.2 + Math.sin(t * 8) * 0.4);
     }
     // 鱼
     for (const f of this.fishes) f.update(dt, f === this.lureFish ? this.lurePos : null);
@@ -1935,9 +1936,9 @@ export class World {
     const nightF = isNight ? 1 : 0;
     (this.stars.material as THREE.PointsMaterial).opacity = nightF * 0.9;
     (this.moon.material as THREE.SpriteMaterial).opacity = nightF;
-    this.moonLight.intensity = nightF * 0.4;
+    this.moonLight.intensity = this.vrMode ? 0 : nightF * 0.4;
     (this.fireflies.material as THREE.PointsMaterial).opacity = nightF;
-    for (const l of this.lamps) l.intensity = nightF * 2.4;
+    if (!this.vrMode) for (const l of this.lamps) l.intensity = nightF * 2.4;
     for (const pm of this.lampPools) pm.opacity = nightF * 0.45;
     for (const b of this.lampBulbs) b.emissive.set(isNight ? 0xffd9a0 : 0x000000);
     // 花瓣飘落（纯装饰，VR 保帧率时隔帧跳过；跳过的帧用双倍 dt 补偿节奏）
