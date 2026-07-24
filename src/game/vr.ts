@@ -494,7 +494,7 @@ export class VRSystem {
 
       this.savedPixelRatio = r.getPixelRatio();
 
-      r.setPixelRatio(Math.min(0.65, this.savedPixelRatio));
+      r.setPixelRatio(Math.min(0.5, this.savedPixelRatio));
 
       this.savedFar = this.host.camera.far;
       this.host.camera.far = 40; // VR 砍远裁剪到 40m：雾不动，用户偏好
@@ -754,7 +754,7 @@ export class VRSystem {
 
   // ---------------- 每帧更新（由 Game 主循环调用）----------------
 
-  private drAcc = 0; private drN = 0; private drCd = 0; private curPR = 0.65;
+  private drAcc = 0; private drN = 0; private drCd = 0; private curPR = 0.5;
 
   private lastAvgMs = 0; // 最近平均帧时间（左腕状态页显示用）
 
@@ -788,13 +788,13 @@ export class VRSystem {
 
     const userSpeed = this.march.speed;
 
-    let targetPR = 0.65;
+    let targetPR = 0.5;
 
-    if (userSpeed > 2.5) targetPR = 0.35;
+    if (userSpeed > 2.5) targetPR = 0.3;
 
-    else if (userSpeed > 1.0) targetPR = 0.45;
+    else if (userSpeed > 1.0) targetPR = 0.35;
 
-    else if (userSpeed > 0.3) targetPR = 0.55;
+    else if (userSpeed > 0.3) targetPR = 0.4;
 
     // 帧时间兜底（每 2 秒采样一次，10 帧平均）
 
@@ -808,9 +808,9 @@ export class VRSystem {
 
       this.lastAvgMs = avg * 1000;
 
-      if (avg > 0.040) targetPR = Math.min(targetPR, 0.3); // 兜底：50ms 强制降到 0.3
+      if (avg > 0.040) targetPR = Math.min(targetPR, 0.25); // 兜底：50ms 强制降到 0.25
 
-      else if (avg < 0.014) targetPR = Math.min(0.65, targetPR + 0.05); // 帧宽裕小幅回升
+      else if (avg < 0.014) targetPR = Math.min(0.5, targetPR + 0.05); // 帧宽裕小幅回升
 
     }
 
@@ -1448,7 +1448,7 @@ export class VRSystem {
 
     const c = document.createElement('canvas');
 
-    c.width = 384; c.height = 288;
+    c.width = 192; c.height = 144;
 
     this.wristCtx = c.getContext('2d')!;
 
@@ -1596,7 +1596,7 @@ export class VRSystem {
 
     const c = document.createElement('canvas');
 
-    c.width = 512; c.height = 720;
+    c.width = 256; c.height = 360;
 
     this.phoneCtx = c.getContext('2d')!;
 
@@ -2048,7 +2048,7 @@ export class VRSystem {
 
     const c = document.createElement('canvas');
 
-    c.width = 1024; c.height = 512;
+    c.width = 512; c.height = 256;
 
     this.dialogCtx = c.getContext('2d')!;
 
