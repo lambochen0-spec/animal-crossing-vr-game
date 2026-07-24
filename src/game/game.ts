@@ -400,8 +400,8 @@ export class Game {
         const i = list.indexOf(this.tool);
         this.setTool(list[(i + dir + list.length) % list.length]);
       },
-      onVRStart: () => { this.player.group.visible = false; this.world.vrMode = true; this.toast('VR 模式', '🥽', '原地踏步前进，挥动手柄使用工具，左腕看任务，右腕是手机'); },
-      onVREnd: () => { this.player.group.visible = true; this.world.vrMode = false; },
+      onVRStart: () => { this.player.group.visible = false; this.toast('VR 模式', '🥽', '原地踏步前进，挥动手柄使用工具，左腕看任务，右腕是手机'); },
+      onVREnd: () => { this.player.group.visible = true; },
       touch: touchInput,
       getInventory: () => Object.entries(this.inventory),
       onSelectTool: (t) => { if (this.unlockedTools.has(t as ToolId)) { this.setTool(t as ToolId); sfx.plop(); } },
@@ -3264,7 +3264,7 @@ export class Game {
 
     this.updateSky(isNight);
     this.updateRain(dt);
-    this.playerGlow.intensity = this.vrSys.active ? 0 : (isNight && !this.inside ? 0.6 : 0); // VR 关随光
+    this.playerGlow.intensity = isNight && !this.inside ? 0.6 : 0; // 室内不需要随身光源
     // 平行光从斜上方均匀洒下，跟着玩家移动，不产生光斑
     this.playerGlow.position.set(this.playerPos.x + 12, this.playerPos.y + 20, this.playerPos.z + 8);
     this.playerGlow.target.position.copy(this.playerPos);
@@ -4302,19 +4302,11 @@ export class Game {
       }
     }
     const dayF = Math.max(0, Math.min(1, sy * 2 + 0.4));
-    if (this.vrSys.active) {
-      // VR 模式：锁定恒定光照（避免每帧 GPU uniform 写入）
-      this.sun.intensity = isNight ? 0.20 : 0.85;
-      this.sun.color.set(isNight ? 0x8fa8ff : 0xfff4e0);
-      this.ambient.intensity = isNight ? 0.35 : 0.50;
-      this.hemi.intensity = 0.4;
-    } else {
-      this.sun.intensity = isNight ? 0.18 : 0.4 + dayF * 0.8;
-      if (this.weather === 'rain' && !isNight) this.sun.intensity *= 0.5;
-      this.sun.color.set(isNight ? 0x8fa8ff : 0xfff4e0);
-      this.ambient.intensity = isNight ? 0.32 : 0.55;
-      this.hemi.intensity = isNight ? 0.2 : this.weather === 'rain' ? 0.38 : 0.5;
-    }
+    this.sun.intensity = isNight ? 0.18 : 0.4 + dayF * 0.8;
+    if (this.weather === 'rain' && !isNight) this.sun.intensity *= 0.5;
+    this.sun.color.set(isNight ? 0x8fa8ff : 0xfff4e0);
+    this.ambient.intensity = isNight ? 0.32 : 0.55;
+    this.hemi.intensity = isNight ? 0.2 : this.weather === 'rain' ? 0.38 : 0.5;
   }
 }
 
