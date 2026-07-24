@@ -2159,10 +2159,13 @@ export class VRSystem {
 
 
 
+
   private drawDialog(d: { name?: string; text?: string; actions?: { label: string; command: string }[]; title?: string; icon?: string; desc?: string }) {
 
     const ctx = this.dialogCtx;
 
+    ctx.save();
+    ctx.scale(2, 2); // 贴图从 1024×512 降到 512×256，所有坐标 ×2 缩放
     ctx.clearRect(0, 0, 1024, 512);
 
     ctx.fillStyle = 'rgba(255,250,238,0.97)';
@@ -2277,7 +2280,9 @@ export class VRSystem {
 
     this.dialogTex.needsUpdate = true;
 
+    ctx.restore();
   }
+
 
 
 
@@ -2344,6 +2349,5 @@ export class VRSystem {
     }
 
   }
-    ctx.restore();
-  }
 
+}
