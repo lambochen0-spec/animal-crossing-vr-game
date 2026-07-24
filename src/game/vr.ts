@@ -1456,7 +1456,7 @@ export class VRSystem {
 
     const m = new THREE.Mesh(
 
-      new THREE.PlaneGeometry(0.1, 0.075),
+      new THREE.PlaneGeometry(0.2, 0.15),
 
       new THREE.MeshBasicMaterial({ map: this.wristTex, transparent: true }),
 
@@ -1608,7 +1608,7 @@ export class VRSystem {
 
     const m = new THREE.Mesh(
 
-      new THREE.PlaneGeometry(0.085, 0.12),
+      new THREE.PlaneGeometry(0.17, 0.24),
 
       new THREE.MeshBasicMaterial({ map: this.phoneTex, transparent: true }),
 
@@ -2079,7 +2079,7 @@ export class VRSystem {
 
     const m = new THREE.Mesh(
 
-      new THREE.PlaneGeometry(0.65, 0.325),
+      new THREE.PlaneGeometry(1.3, 0.65),
 
       new THREE.MeshBasicMaterial({ map: this.dialogTex, transparent: true, depthTest: false }),
 
