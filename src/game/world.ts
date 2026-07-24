@@ -91,7 +91,7 @@ let _poolTex: THREE.CanvasTexture | null = null;
 function glowPoolTexture(): THREE.CanvasTexture {
   if (_poolTex) return _poolTex;
   const c = document.createElement('canvas');
-  c.width = c.height = 128;
+  c.width = c.height = 64;
   const ctx = c.getContext('2d')!;
   const g = ctx.createRadialGradient(64, 64, 4, 64, 64, 62);
   g.addColorStop(0, 'rgba(255,220,160,0.95)');
