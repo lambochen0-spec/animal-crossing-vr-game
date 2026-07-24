@@ -1477,6 +1477,8 @@ export class VRSystem {
   private drawWrist() {
 
     const ctx = this.wristCtx;
+    ctx.save();
+    ctx.scale(2, 2); // 贴图坐标系 ×2 缩放（旧坐标按原尺寸写）
 
     const s = store.state;
 
@@ -1586,6 +1588,8 @@ export class VRSystem {
 
     this.wristTex.needsUpdate = true;
 
+    ctx.restore();
+
   }
 
 
@@ -1623,6 +1627,9 @@ export class VRSystem {
   private drawPhone() {
 
     const ctx = this.phoneCtx;
+    ctx.save();
+    ctx.scale(2, 2); // 贴图从 512×720 降到 256×360，所有坐标系 ×2 缩放
+
 
     const s = store.state;
 
@@ -1678,6 +1685,8 @@ export class VRSystem {
 
     this.phoneTex.needsUpdate = true;
 
+    ctx.restore();
+
   }
 
 
@@ -1696,6 +1705,8 @@ export class VRSystem {
 
   private drawPhoneMap(ctx: CanvasRenderingContext2D, s: typeof store.state) {
 
+    ctx.save();
+    ctx.scale(2, 2); // 贴图坐标系 ×2 缩放（旧坐标按原尺寸写）
     // 地图图片（游戏内地图同一张）
 
     if (s.mapImage && s.mapImage !== this.mapImgSrc) {
@@ -1778,12 +1789,16 @@ export class VRSystem {
 
     ctx.fillText(`${s.islandName || '小岛'} · ${s.timeText}`, 18, 600);
 
+    ctx.restore();
+
   }
 
 
 
   private drawPhoneBag(ctx: CanvasRenderingContext2D, _s: typeof store.state) {
 
+    ctx.save();
+    ctx.scale(2, 2); // 贴图坐标系 ×2 缩放（旧坐标按原尺寸写）
     const inv = this.host.getInventory().filter(([, n]) => n > 0);
 
     ctx.fillStyle = '#8fa8c8';
@@ -1854,6 +1869,8 @@ export class VRSystem {
 
     }
 
+    ctx.restore();
+
   }
 
 
@@ -1862,6 +1879,8 @@ export class VRSystem {
 
   private drawPhoneTool(ctx: CanvasRenderingContext2D, s: typeof store.state) {
 
+    ctx.save();
+    ctx.scale(2, 2); // 贴图坐标系 ×2 缩放（旧坐标按原尺寸写）
     const tools: [string, string, string][] = [
 
       ['hand', '✋', '空手'], ['net', '🥅', '捕虫网'], ['rod', '🎣', '钓竿'], ['shovel', '⛏️', '铲子'], ['axe', '🪓', '斧头'],
@@ -1933,6 +1952,8 @@ export class VRSystem {
     ctx.font = 'bold 24px sans-serif';
 
     ctx.fillText(`当前：${cur?.[1] ?? ''} ${cur?.[2] ?? s.tool}`, 18, 560);
+
+    ctx.restore();
 
   }
 
@@ -2323,6 +2344,6 @@ export class VRSystem {
     }
 
   }
-
-}
+    ctx.restore();
+  }
 
