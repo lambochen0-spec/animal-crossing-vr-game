@@ -390,7 +390,7 @@ export class World {
   lamps: THREE.PointLight[] = [];
   lampBulbs: THREE.MeshLambertMaterial[] = [];
   lampPools: THREE.MeshBasicMaterial[] = [];
-  water!: THREE.Mesh;
+  waterChunks: THREE.Mesh[] = [];   // 水面小块（已拆分成 80×80 格，VR 时各自 frustum culling）
   lureFish: Fish | null = null;
   lurePos = new THREE.Vector3();
   stars!: THREE.Points;
@@ -432,6 +432,7 @@ export class World {
       const cap = 220;
       const im = new THREE.InstancedMesh(this.flowerCrossGeo, this.flowerMats[itemId], cap);
       im.castShadow = true;
+      im.frustumCulled = true;
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       const zero = new THREE.Matrix4().makeScale(0, 0, 0);
       for (let i = 0; i < cap; i++) im.setMatrixAt(i, zero);
@@ -578,13 +579,25 @@ export class World {
 
   private buildWater() {
     const tex = waterTexture();
-    const geo = new THREE.PlaneGeometry(560, 560);
-    this.water = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+    const mat = new THREE.MeshLambertMaterial({
       map: tex, transparent: true, opacity: 0.72,
-    }));
-    this.water.rotation.x = -Math.PI / 2;
-    this.water.position.y = WATER_Y;
-    this.group.add(this.water);
+    });
+    // 把 560×560 水面拆成 7×7=49 个 80×80 小块，每块的包围球半径≈56，
+    // VR 视锥（far=40）只会命中当前朝向可见的小块——frustum culling 终于生效了。
+    const CHUNK = 80;
+    const HALF_W = 280;
+    for (let cx = -HALF_W + CHUNK / 2; cx < HALF_W; cx += CHUNK) {
+      for (let cz = -HALF_W + CHUNK / 2; cz < HALF_W; cz += CHUNK) {
+        const geo = new THREE.PlaneGeometry(CHUNK, CHUNK);
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(cx, WATER_Y, cz);
+        mesh.matrixAutoUpdate = false;
+        mesh.updateMatrix();
+        this.group.add(mesh);
+        this.waterChunks.push(mesh);
+      }
+    }
   }
 
   private buildBridge() {
@@ -1597,7 +1610,9 @@ export class World {
     const fi = this.ensureFlowerInst(itemId);
     if (!fi.free.length) return; // 槽位满了就不再种（容量 220/色）
     const slot = fi.free.pop()!;
-    this.setInst(fi.im, slot, x, groundHeight(x, z), z, 1, 1, 1);
+    const gy = groundHeight(x, z);
+    // 抬高 0.03 防 z-fighting（花底与地面共面闪烁）；缩至 0.85 使花比例更自然
+    this.setInst(fi.im, slot, x, gy + 0.03, z, 0.85, 0.85, 0.85);
     fi.im.instanceMatrix.needsUpdate = true;
     this.flowers.push({ id: this.nextId++, x, z, itemId, slot });
   }
@@ -1833,9 +1848,13 @@ export class World {
   private waterT = 0;
   // decoSkip：VR 保帧率时隔帧跳过纯装饰动画（花瓣/萤火虫），物理与交互不受影响
   update(dt: number, _time24: number, isNight: boolean, now: number, decoSkip = false) {
-    // 水面流动
+    // 水面流动 & 灯光
     this.waterT += dt * 0.02;
-    (this.water.material as THREE.MeshLambertMaterial).map!.offset.set(this.waterT, this.waterT * 0.6);
+    const wOff = this.waterT;
+    const wOff2 = this.waterT * 0.6;
+    for (const w of this.waterChunks) {
+      (w.material as THREE.MeshLambertMaterial).map!.offset.set(wOff, wOff2);
+    }
 
     // 树摇摆 & 结果（实例矩阵更新）
     for (const t of this.trees) {
