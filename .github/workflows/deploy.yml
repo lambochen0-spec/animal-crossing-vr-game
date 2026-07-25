@@ -27,7 +27,9 @@ jobs:
         with:
           node-version: 20
 
-      - run: npm ci
+      # npm ci 在 Lockfile 路径下会触发 npm exit handler never called bug
+      # 改用 npm install —— Node 20+ 默认读取 package-lock.json 并安装依赖
+      - run: npm install
 
       - run: npx vite build
 
