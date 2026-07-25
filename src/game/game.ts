@@ -1,4 +1,3 @@
-// fix: trigger redeploy (npm install flake)
 // 主引擎：渲染循环、输入、相机、交互、任务流程、钓鱼、经济、昼夜（跟随真实时间）
 
 import * as THREE from 'three';
@@ -825,9 +824,9 @@ export class Game {
 
       },
 
-      getFlowers: () => this.world.flowers.map(f => ({ id: f.id, x: f.x, z: f.z, itemId: f.itemId })),
+      getFlowers: () => this.inside ? [] : this.world.flowers.map(f => ({ id: f.id, x: f.x, z: f.z, itemId: f.itemId })),
 
-      getWeeds: () => this.world.weeds.map(w => ({ id: w.id, x: w.x, z: w.z })),
+      getWeeds: () => this.inside ? [] : this.world.weeds.map(w => ({ id: w.id, x: w.x, z: w.z })),
 
       onPointFlower: (id) => {
         const f = this.world.flowers.find(x => x.id === id);
