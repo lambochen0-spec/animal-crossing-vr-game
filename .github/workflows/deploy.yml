@@ -27,10 +27,12 @@ jobs:
         with:
           node-version: 20
 
-      # A方案: npm ci + --include=dev
-      # - npm ci 用 lockfile, 不重新解析, 避 DNS EAI_AGAIN
-      # - --include=dev 装 vite (在 devDependencies)
-      - run: npm ci --include=dev
+      # Reasonix 报告的 A 方案备用版
+      # npm install (而非 npm ci 因为 ci 在这个 lockfile 上触发 npm 10 'Exit handler never called' bug)
+      # --include=dev 装 vite 等 devDependencies
+      # --ignore-scripts 跳过 lifecycle scripts (这些是 SIGABRT 触发点)
+      # --foreground-scripts 不是要 ignore 的, 单写
+      - run: npm install --include=dev --ignore-scripts
 
       - run: npx vite build
 
