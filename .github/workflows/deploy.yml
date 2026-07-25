@@ -27,12 +27,8 @@ jobs:
         with:
           node-version: 20
 
-      # lockfile 里有 126 个包从失效的 npm.mirrors.msh.team 拉
-      # 用环境变量强制所有 npm 请求走官方 registry, 不用 --registry (避开 / 转义)
-      - name: Install deps (force official npm registry)
-        env:
-          npm_config_registry: https://registry.npmjs.org
-        run: npm install
+      # 删了 lockfile, npm install 会基于 package.json 重新生成（用官方源）
+      - run: npm install --registry=https://registry.npmjs.org/
 
       - run: npx vite build
 
