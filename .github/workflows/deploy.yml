@@ -27,9 +27,10 @@ jobs:
         with:
           node-version: 20
 
-      # 回到成功部署 (8629b77d1c) 的命令
-      # 用 npm install --no-package-lock (跟上次一样的工作命令)
-      # 同时删 package-lock.json 后, 该命令会基于 package.json 重新生成
+      # GitHub Runner 镜像升级后 npm 10.8.2 跟现有 lockfile v3 触发 SIGABRT
+      # 装 npm 8 (Node 16/18 默认版本,无此 bug)
+      - run: npm install -g npm@8
+
       - run: npm install
 
       - run: npx vite build
