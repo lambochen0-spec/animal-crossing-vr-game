@@ -27,9 +27,10 @@ jobs:
         with:
           node-version: 20
 
-      # --include=dev 强制装 devDependencies (vite 在那里)
-      # --foreground-scripts 绕开 'Exit handler never called' bug
-      - run: npm install --include=dev --foreground-scripts
+      # A方案: npm ci + --include=dev
+      # - npm ci 用 lockfile, 不重新解析, 避 DNS EAI_AGAIN
+      # - --include=dev 装 vite (在 devDependencies)
+      - run: npm ci --include=dev
 
       - run: npx vite build
 
