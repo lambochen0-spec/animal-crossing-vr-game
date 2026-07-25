@@ -27,11 +27,9 @@ jobs:
         with:
           node-version: 20
 
-      # GitHub Runner 镜像升级后 npm 10.8.2 跟现有 lockfile v3 触发 SIGABRT
-      # 装 npm 8 (Node 16/18 默认版本,无此 bug)
-      - run: npm install -g npm@8
-
-      - run: npm install
+      # lockfile 里有 126 个包指向 npm.mirrors.msh.team (挂了)
+      # 用 --registry 强制所有请求走官方 registry.npmjs.org
+      - run: npm install --registry=https://registry.npmjs.org/
 
       - run: npx vite build
 
