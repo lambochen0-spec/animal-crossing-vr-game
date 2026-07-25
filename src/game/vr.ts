@@ -108,6 +108,14 @@ export interface VRHost {
 
   getTalkTargets(): { id: string; pos: THREE.Vector3; top: number }[]; // 可对话角色（指向对话用）
 
+  getFlowers(): { id: number; x: number; z: number; itemId: string }[];  // 可摘花（指向摘取用）
+
+  getWeeds(): { id: number; x: number; z: number }[];                    // 可拔草（指向拔取用）
+
+  onPointFlower(id: number): void;    // 手柄指着花扣扳机 → 摘花
+
+  onPointWeed(id: number): void;      // 手柄指着草扣扳机 → 拔草
+
 
 
   onPointTalk(id: string): void;      // 手柄指着角色扣扳机 → 对话
@@ -1858,7 +1866,7 @@ export class VRSystem {
 
 
 
-    type Cand = { kind: 'pickup' | 'talk'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number; r2: number };
+    type Cand = { kind: 'pickup' | 'talk' | 'flower' | 'weed'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number; r2: number };
 
 
 
@@ -1872,7 +1880,15 @@ export class VRSystem {
 
       cands = this.host.getPickups().map(p => ({ kind: 'pickup' as const, id: String(p.id), pos: p.pos, mesh: p.mesh, top: 0, r2: 0.36 })); // 半径 0.6m
 
+      for (const f of this.host.getFlowers()) {
+        const fy = this.host.groundY(f.x, f.z);
+        cands.push({ kind: 'flower', id: String(f.id), pos: new THREE.Vector3(f.x, fy, f.z), top: fy + 0.6, r2: 0.64 });
+      }
 
+      for (const w of this.host.getWeeds()) {
+        const wy = this.host.groundY(w.x, w.z);
+        cands.push({ kind: 'weed', id: String(w.id), pos: new THREE.Vector3(w.x, wy, w.z), top: wy + 0.3, r2: 0.49 });
+      }
 
       for (const t of this.host.getTalkTargets()) {
 
@@ -1890,7 +1906,7 @@ export class VRSystem {
 
 
 
-    const next: ({ kind: 'pickup' | 'talk'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number } | null)[] = [null, null];
+    const next: ({ kind: 'pickup' | 'talk' | 'flower' | 'weed'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number } | null)[] = [null, null];
 
 
 
@@ -2611,9 +2627,8 @@ export class VRSystem {
 
 
       if (pt.kind === 'talk') this.host.onPointTalk(pt.id);
-
-
-
+      else if (pt.kind === 'flower') this.host.onPointFlower(+pt.id);
+      else if (pt.kind === 'weed') this.host.onPointWeed(+pt.id);
       else this.host.onPointPickup(+pt.id);
 
 
