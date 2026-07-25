@@ -862,7 +862,7 @@ export class VRSystem {
 
 
 
-  private pointByHand: ({ kind: 'pickup' | 'talk'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number } | null)[] = [null, null];
+  private pointByHand: ({ kind: 'pickup' | 'talk' | 'flower' | 'weed'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number } | null)[] = [null, null];
 
 
 
