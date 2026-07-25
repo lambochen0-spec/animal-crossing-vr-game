@@ -1,3 +1,4 @@
+// fix: trigger redeploy (npm install flake)
 // 主引擎：渲染循环、输入、相机、交互、任务流程、钓鱼、经济、昼夜（跟随真实时间）
 
 import * as THREE from 'three';
