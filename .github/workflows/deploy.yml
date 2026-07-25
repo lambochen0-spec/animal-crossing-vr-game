@@ -23,16 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 20 已 deprecation, runner 强制 Node 24.
+      # 升 Node 22 拿到 npm 10.9+ (含 lockfile v3 'Exit handler never called' bug 修复)
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
-      # Reasonix 报告的 A 方案备用版
-      # npm install (而非 npm ci 因为 ci 在这个 lockfile 上触发 npm 10 'Exit handler never called' bug)
-      # --include=dev 装 vite 等 devDependencies
-      # --ignore-scripts 跳过 lifecycle scripts (这些是 SIGABRT 触发点)
-      # --foreground-scripts 不是要 ignore 的, 单写
-      - run: npm install --include=dev --ignore-scripts
+      # npm ci: 用 lockfile, 不重新解析, 避 DNS EAI_AGAIN
+      # --include=dev: 装 vite 等 devDependencies
+      - run: npm ci --include=dev
 
       - run: npx vite build
 
