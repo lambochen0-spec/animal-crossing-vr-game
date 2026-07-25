@@ -27,9 +27,12 @@ jobs:
         with:
           node-version: 20
 
-      # lockfile 里有 126 个包指向 npm.mirrors.msh.team (挂了)
-      # 用 --registry 强制所有请求走官方 registry.npmjs.org
-      - run: npm install --registry=https://registry.npmjs.org/
+      # lockfile 里有 126 个包从失效的 npm.mirrors.msh.team 拉
+      # 用环境变量强制所有 npm 请求走官方 registry, 不用 --registry (避开 / 转义)
+      - name: Install deps (force official npm registry)
+        env:
+          npm_config_registry: https://registry.npmjs.org
+        run: npm install
 
       - run: npx vite build
 
