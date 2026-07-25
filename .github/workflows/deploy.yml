@@ -23,15 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Node 20 已 deprecation, runner 强制 Node 24.
-      # 升 Node 22 拿到 npm 10.9+ (含 lockfile v3 'Exit handler never called' bug 修复)
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
 
-      # npm ci: 用 lockfile, 不重新解析, 避 DNS EAI_AGAIN
-      # --include=dev: 装 vite 等 devDependencies
-      - run: npm ci --include=dev
+      # 回到成功部署 (8629b77d1c) 的命令
+      # 用 npm install --no-package-lock (跟上次一样的工作命令)
+      # 同时删 package-lock.json 后, 该命令会基于 package.json 重新生成
+      - run: npm install
 
       - run: npx vite build
 
