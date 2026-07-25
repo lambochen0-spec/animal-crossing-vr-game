@@ -27,8 +27,9 @@ jobs:
         with:
           node-version: 20
 
-      # 'Exit handler never called' 是 npm cli 崩溃，加 --foreground-scripts 绕开
-      - run: npm install --foreground-scripts
+      # --include=dev 强制装 devDependencies (vite 在那里)
+      # --foreground-scripts 绕开 'Exit handler never called' bug
+      - run: npm install --include=dev --foreground-scripts
 
       - run: npx vite build
 
