@@ -27,8 +27,12 @@ jobs:
         with:
           node-version: 20
 
-      # 删了 lockfile, npm install 会基于 package.json 重新生成（用官方源）
-      - run: npm install --registry=https://registry.npmjs.org/
+      # 删了 lockfile (避免失效镜像 URL)
+      # --legacy-peer-deps 跳过 peerDeps 检查 (项目本来就这样)
+      - name: Install (force official registry, legacy peer deps)
+        env:
+          npm_config_registry: https://registry.npmjs.org
+        run: npm install --legacy-peer-deps
 
       - run: npx vite build
 
