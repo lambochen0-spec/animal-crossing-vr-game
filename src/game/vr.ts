@@ -2,7 +2,15 @@
 
 
 
+
+
+
+
 // 第一人称视角 + 双手 + 原地踏步移动 + 挥臂用工具 + 手腕面板 + 悬浮对话
+
+
+
+
 
 
 
@@ -10,7 +18,15 @@
 
 
 
+
+
+
+
 import * as THREE from 'three';
+
+
+
+
 
 
 
@@ -18,7 +34,15 @@ import { store, commands } from './store';
 
 
 
+
+
+
+
 import { ITEMS } from './data';
+
+
+
+
 
 
 
@@ -30,7 +54,19 @@ import { makeFruitDrop, makePokeBall } from './items3d';
 
 
 
+
+
+
+
+
+
+
+
 // 宿主（Game）提供给 VR 系统的接口
+
+
+
+
 
 
 
@@ -38,7 +74,15 @@ export interface VRHost {
 
 
 
+
+
+
+
   renderer: THREE.WebGLRenderer;
+
+
+
+
 
 
 
@@ -46,7 +90,15 @@ export interface VRHost {
 
 
 
+
+
+
+
   camera: THREE.PerspectiveCamera;
+
+
+
+
 
 
 
@@ -54,7 +106,15 @@ export interface VRHost {
 
 
 
+
+
+
+
   groundY(x: number, z: number): number;
+
+
+
+
 
 
 
@@ -62,7 +122,15 @@ export interface VRHost {
 
 
 
+
+
+
+
   onVrSwing(power: number): void;  // 挥臂 → 用工具/摇树/甩竿
+
+
+
+
 
 
 
@@ -70,7 +138,15 @@ export interface VRHost {
 
 
 
+
+
+
+
   onCycleTool(dir: number): void;  // A/B 键切换工具
+
+
+
+
 
 
 
@@ -78,7 +154,15 @@ export interface VRHost {
 
 
 
+
+
+
+
   onVREnd(): void;                 // 退出 VR
+
+
+
+
 
 
 
@@ -86,7 +170,15 @@ export interface VRHost {
 
 
 
+
+
+
+
   getInventory(): [string, number][]; // 背包物品（右手"手机"显示用）
+
+
+
+
 
 
 
@@ -94,7 +186,15 @@ export interface VRHost {
 
 
 
+
+
+
+
   hasTool(tool: string): boolean;     // 工具是否已解锁
+
+
+
+
 
 
 
@@ -102,19 +202,39 @@ export interface VRHost {
 
 
 
+
+
+
+
   onPointPickup(id: number): void;    // 手柄指着掉落物扣扳机 → 放入背包
+
+
+
+
 
 
 
   getTalkTargets(): { id: string; pos: THREE.Vector3; top: number }[]; // 可对话角色（指向对话用）
 
+
+
   getFlowers(): { id: number; x: number; z: number; itemId: string }[];  // 可摘花（指向摘取用）
+
+
 
   getWeeds(): { id: number; x: number; z: number }[];                    // 可拔草（指向拔取用）
 
+
+
   onPointFlower(id: number): void;    // 手柄指着花扣扳机 → 摘花
 
+
+
   onPointWeed(id: number): void;      // 手柄指着草扣扳机 → 拔草
+
+
+
+
 
 
 
@@ -122,11 +242,27 @@ export interface VRHost {
 
 
 
+
+
+
+
   getMapMarkers(): { name: string; x: number; z: number; color: string }[]; // 宝可梦实时位置（手机地图页）
 
 
 
+
+
+
+
 }
+
+
+
+
+
+
+
+
 
 
 
@@ -138,7 +274,15 @@ export interface VRHost {
 
 
 
+
+
+
+
 // 原理：取左右手柄的 Y 速度（位置差分），跑步时两手反相关摆动，乘积出一个
+
+
+
+
 
 
 
@@ -146,7 +290,15 @@ export interface VRHost {
 
 
 
+
+
+
+
 // 频率 ≥ 慢跑门槛 → 0.9 m/s；≥ 快跑门槛 → 3.0 m/s。完全不用头部位置，
+
+
+
+
 
 
 
@@ -154,7 +306,15 @@ export interface VRHost {
 
 
 
+
+
+
+
 // 参考：GodotXR-tools/addons/godot-xr-tools/functions/movement_jog.gd
+
+
+
+
 
 
 
@@ -162,7 +322,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
   // 慢跑触发频率（Hz）—— Godot 默认 3.5，这里降到 2.5 让"小步慢颠"也能起步
+
+
+
+
 
 
 
@@ -170,7 +338,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
   // 快跑触发频率（Hz）—— Godot 默认 5.5，这里降到 3.5（Pico 手臂摆动通常 2.5~4 Hz）
+
+
+
+
 
 
 
@@ -178,7 +354,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
   // confidence 门槛（无量纲，speed²）—— 信号低于此视为未跑
+
+
+
+
 
 
 
@@ -190,7 +374,19 @@ export class MarchDetector {
 
 
 
+
+
+
+
+
+
+
+
   // 双手柄 Y 速度 EMA（指数移动平均，避免噪声）
+
+
+
+
 
 
 
@@ -198,7 +394,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
   // confidence 信号（peak 检测）
+
+
+
+
 
 
 
@@ -206,7 +410,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
   // stroke 持续时间累加
+
+
+
+
 
 
 
@@ -214,7 +426,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
   // 上一个完整 stroke 持续时间（用于算 Hz）
+
+
+
+
 
 
 
@@ -222,7 +442,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
   // 上一次手柄位置（用于差分算速度）
+
+
+
+
 
 
 
@@ -230,11 +458,23 @@ export class MarchDetector {
 
 
 
+
+
+
+
   private prevRightPos: THREE.Vector3 | null = null;
 
 
 
+
+
+
+
   // 上一帧步频Hz（输出用）
+
+
+
+
 
 
 
@@ -246,7 +486,19 @@ export class MarchDetector {
 
 
 
+
+
+
+
+
+
+
+
   speed = 0;                // 平滑后的目标速度（米/秒）
+
+
+
+
 
 
 
@@ -258,7 +510,19 @@ export class MarchDetector {
 
 
 
+
+
+
+
+
+
+
+
   // left/right: 当前帧两个手柄的世界位置对象；t: 当前时间秒；dt: 帧间隔秒
+
+
+
+
 
 
 
@@ -266,7 +530,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     // 1. 计算左右手柄 Y 速度（位置差分）
+
+
+
+
 
 
 
@@ -274,7 +546,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
       const leftVy = (leftPos.y - this.prevLeftPos.y) / dt;
+
+
+
+
 
 
 
@@ -282,7 +562,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
       // EMA 平滑（α ≈ 0.5 —— 跑动时 1 帧基本到位）
+
+
+
+
 
 
 
@@ -290,7 +578,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
       this.rightVy = this.rightVy + (rightVy - this.rightVy) * Math.min(1, dt * 8);
+
+
+
+
 
 
 
@@ -298,7 +594,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     this.prevLeftPos = leftPos.clone();
+
+
+
+
 
 
 
@@ -310,7 +614,19 @@ export class MarchDetector {
 
 
 
+
+
+
+
+
+
+
+
     // 2. confidence 信号 = 左 Y 速度 × -右 Y 速度（反相关 → 跑步时出正峰）
+
+
+
+
 
 
 
@@ -322,7 +638,19 @@ export class MarchDetector {
 
 
 
+
+
+
+
+
+
+
+
     // 3. valley 检测 + confidence-hat 更新（快升慢降）
+
+
+
+
 
 
 
@@ -330,7 +658,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     if (valley) {
+
+
+
+
 
 
 
@@ -338,7 +674,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
       this.confHat = this.confHat + (0 - this.confHat) * Math.min(1, dt * 2);
+
+
+
+
 
 
 
@@ -346,7 +690,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
       // 峰时快速升
+
+
+
+
 
 
 
@@ -354,7 +706,19 @@ export class MarchDetector {
 
 
 
+
+
+
+
     }
+
+
+
+
+
+
+
+
 
 
 
@@ -366,7 +730,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     if (this.confHat < MarchDetector.CONF_THRESH) {
+
+
+
+
 
 
 
@@ -374,7 +746,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
       this.lastStroke = 0;
+
+
+
+
 
 
 
@@ -382,7 +762,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
       this.running = false;
+
+
+
+
 
 
 
@@ -390,7 +778,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
       if (this.speed < 0.05) this.speed = 0;
+
+
+
+
 
 
 
@@ -398,7 +794,19 @@ export class MarchDetector {
 
 
 
+
+
+
+
     }
+
+
+
+
+
+
+
+
 
 
 
@@ -410,7 +818,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     if (valley) {
+
+
+
+
 
 
 
@@ -418,7 +834,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     } else if (this.currentStroke > 0.1) {
+
+
+
+
 
 
 
@@ -426,11 +850,27 @@ export class MarchDetector {
 
 
 
+
+
+
+
       this.currentStroke = 0;
 
 
 
+
+
+
+
     }
+
+
+
+
+
+
+
+
 
 
 
@@ -442,7 +882,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     if (this.lastStroke < 0.1) {
+
+
+
+
 
 
 
@@ -450,7 +898,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     } else {
+
+
+
+
 
 
 
@@ -458,7 +914,19 @@ export class MarchDetector {
 
 
 
+
+
+
+
     }
+
+
+
+
+
+
+
+
 
 
 
@@ -470,7 +938,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     if (this.currentStroke > 0.75) {
+
+
+
+
 
 
 
@@ -478,7 +954,19 @@ export class MarchDetector {
 
 
 
+
+
+
+
     }
+
+
+
+
+
+
+
+
 
 
 
@@ -490,7 +978,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     const hz = this.strokeHz;
+
+
+
+
 
 
 
@@ -498,7 +994,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     if (hz >= MarchDetector.SLOW_FREQ) {
+
+
+
+
 
 
 
@@ -506,7 +1010,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
       const ratio = Math.min(1, (hz - MarchDetector.SLOW_FREQ) / (MarchDetector.FAST_FREQ - MarchDetector.SLOW_FREQ));
+
+
+
+
 
 
 
@@ -514,7 +1026,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     } else {
+
+
+
+
 
 
 
@@ -522,7 +1042,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -534,7 +1062,19 @@ export class MarchDetector {
 
 
 
+
+
+
+
+
+
+
+
     // 9. 平滑到目标速度（快速启停）
+
+
+
+
 
 
 
@@ -542,7 +1082,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
     this.speed += (target - this.speed) * Math.min(1, dt * k);
+
+
+
+
 
 
 
@@ -550,11 +1098,27 @@ export class MarchDetector {
 
 
 
+
+
+
+
   }
 
 
 
+
+
+
+
 }
+
+
+
+
+
+
+
+
 
 
 
@@ -566,7 +1130,15 @@ export class MarchDetector {
 
 
 
+
+
+
+
 // 跟踪手柄世界速度：向下劈/向前挥超过阈值 = 一次挥动
+
+
+
+
 
 
 
@@ -574,7 +1146,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
   private prev = new THREE.Vector3();
+
+
+
+
 
 
 
@@ -582,7 +1162,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
   private tmp = new THREE.Vector3();
+
+
+
+
 
 
 
@@ -590,7 +1178,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
   private init = false;
+
+
+
+
 
 
 
@@ -602,7 +1198,19 @@ export class SwingDetector {
 
 
 
+
+
+
+
+
+
+
+
   update(obj: THREE.Object3D, dt: number, moveSpeed = 0): boolean {
+
+
+
+
 
 
 
@@ -610,7 +1218,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
     const p = obj.getWorldPosition(this.tmp);
+
+
+
+
 
 
 
@@ -618,7 +1234,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
     if (dt > 0) this.vel.copy(p).sub(this.prev).divideScalar(dt);
+
+
+
+
 
 
 
@@ -626,7 +1250,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
     if (this.cooldown > 0) return false;
+
+
+
+
 
 
 
@@ -634,7 +1266,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
     const hSpeed = Math.hypot(this.vel.x, this.vel.z);
+
+
+
+
 
 
 
@@ -642,7 +1282,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
     const chopTh = -2.2 - moveSpeed * 0.18;
+
+
+
+
 
 
 
@@ -650,7 +1298,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
     // 下劈（砍树/挖矿/铲地）或前挥（捕虫网/甩竿）
+
+
+
+
 
 
 
@@ -658,7 +1314,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
     const swish = hSpeed > swishTh;
+
+
+
+
 
 
 
@@ -666,7 +1330,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
       this.cooldown = 0.55;
+
+
+
+
 
 
 
@@ -674,7 +1346,15 @@ export class SwingDetector {
 
 
 
+
+
+
+
       return true;
+
+
+
+
 
 
 
@@ -682,11 +1362,23 @@ export class SwingDetector {
 
 
 
+
+
+
+
     return false;
 
 
 
+
+
+
+
   }
+
+
+
+
 
 
 
@@ -698,7 +1390,19 @@ export class SwingDetector {
 
 
 
+
+
+
+
+
+
+
+
 // ================= VR 系统主体 =================
+
+
+
+
 
 
 
@@ -706,7 +1410,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   active = false;
+
+
+
+
 
 
 
@@ -714,7 +1426,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private session: XRSession | null = null;
+
+
+
+
 
 
 
@@ -722,7 +1442,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private controllers: THREE.Group[] = [];
+
+
+
+
 
 
 
@@ -730,7 +1458,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private hands: THREE.Group[] = [];
+
+
+
+
 
 
 
@@ -738,7 +1474,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private currentTool = '';
+
+
+
+
 
 
 
@@ -746,7 +1490,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private swings = [new SwingDetector(), new SwingDetector()];
+
+
+
+
 
 
 
@@ -754,7 +1506,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private wrist!: THREE.Mesh;
+
+
+
+
 
 
 
@@ -762,7 +1522,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private wristTex!: THREE.CanvasTexture;
+
+
+
+
 
 
 
@@ -770,7 +1538,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   // 右手"手机"面板：地图/背包/工具，左手射线点选
+
+
+
+
 
 
 
@@ -778,7 +1554,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private phoneCtx!: CanvasRenderingContext2D;
+
+
+
+
 
 
 
@@ -786,7 +1570,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private phoneTab: 'map' | 'bag' | 'tool' = 'map';
+
+
+
+
 
 
 
@@ -794,7 +1586,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private phoneHover = -1;
+
+
+
+
 
 
 
@@ -802,7 +1602,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private mapImg: HTMLImageElement | null = null;
+
+
+
+
 
 
 
@@ -810,7 +1618,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private bagMsg = '';
+
+
+
+
 
 
 
@@ -818,7 +1634,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private dialogPanel: THREE.Group | null = null;
+
+
+
+
 
 
 
@@ -826,7 +1650,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private dialogTex!: THREE.CanvasTexture;
+
+
+
+
 
 
 
@@ -834,7 +1666,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private hoverBtn = -1;
+
+
+
+
 
 
 
@@ -842,7 +1682,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private lasers: THREE.Mesh[] = [];        // 双手激光线（对话选项场景才显示）
+
+
+
+
 
 
 
@@ -850,7 +1698,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private tmpV = new THREE.Vector3();
+
+
+
+
 
 
 
@@ -858,7 +1714,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   // 指向交互：每只手指着的目标（掉落物 = 拾取；角色 = 对话）
+
+
+
+
 
 
 
@@ -866,7 +1730,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private triggerHeld = [false, false];   // 扳机按住状态（挥臂命中工具的前置条件）
+
+
+
+
 
 
 
@@ -874,11 +1746,23 @@ export class VRSystem {
 
 
 
+
+
+
+
   private tmpQ = new THREE.Quaternion();
 
 
 
+
+
+
+
   private tmpA = new THREE.Vector3();
+
+
+
+
 
 
 
@@ -890,7 +1774,19 @@ export class VRSystem {
 
 
 
+
+
+
+
+
+
+
+
   private host: VRHost;
+
+
+
+
 
 
 
@@ -898,7 +1794,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.host = host;
+
+
+
+
 
 
 
@@ -906,7 +1810,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const xr = (navigator as Navigator & { xr?: XRSystem }).xr;
+
+
+
+
 
 
 
@@ -914,7 +1826,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       xr.isSessionSupported('immersive-vr').then(ok => {
+
+
+
+
 
 
 
@@ -922,7 +1842,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         store.patch({ vrSupported: ok });
+
+
+
+
 
 
 
@@ -930,11 +1858,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -946,7 +1890,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (this.active || !this.supported || this.entering) return;
+
+
+
+
 
 
 
@@ -954,7 +1906,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const xr = (navigator as Navigator & { xr?: XRSystem }).xr!;
+
+
+
+
 
 
 
@@ -962,7 +1922,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const session = await xr.requestSession('immersive-vr', {
+
+
+
+
 
 
 
@@ -970,7 +1938,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       });
+
+
+
+
 
 
 
@@ -978,7 +1954,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const r = this.host.renderer;
+
+
+
+
 
 
 
@@ -986,7 +1970,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       r.xr.setReferenceSpaceType('local-floor');
+
+
+
+
 
 
 
@@ -994,7 +1986,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.savedPixelRatio = r.getPixelRatio();
+
+
+
+
 
 
 
@@ -1002,17 +2002,37 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.savedFar = this.host.camera.far;
+
+
 
       this.host.camera.far = 40; // VR 砍远裁剪到 40m：雾不动，用户偏好
 
+
+
       const fog = this.host.scene.fog as THREE.Fog | null;
+
+
 
       if (fog) { this.savedFog = [fog.near, fog.far]; } // 雾保留不变
 
 
 
+
+
+
+
+      // setFramebufferScalingFactor 必须在 setSession 前调用，否则 baseLayer 已创建不生效
+      (r.xr as unknown as { setFramebufferScalingFactor?: (s: number) => void }).setFramebufferScalingFactor?.(0.2);
       await r.xr.setSession(session);
+
+
+
+
 
 
 
@@ -1020,12 +2040,24 @@ export class VRSystem {
 
 
 
+
+
+
+
       // foveation 把这种"转头边缘糊"做成视觉默认状态——动态降低中心分辨率感觉就不明显。
 
 
 
+
+
+
+
       (r.xr as unknown as { setFoveation?: (f: number) => void; setFramebufferScalingFactor?: (s: number) => void }).setFoveation?.(2);
-      (r.xr as unknown as { setFoveation?: (f: number) => void; setFramebufferScalingFactor?: (s: number) => void }).setFramebufferScalingFactor?.(0.2);
+
+
+
+
+
 
 
 
@@ -1033,7 +2065,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.host.onVRStart();
+
+
+
+
 
 
 
@@ -1041,7 +2081,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.active = true;
+
+
+
+
 
 
 
@@ -1049,7 +2097,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     } catch (e) {
+
+
+
+
 
 
 
@@ -1057,7 +2113,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     } finally {
+
+
+
+
 
 
 
@@ -1065,11 +2129,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -1085,7 +2165,19 @@ export class VRSystem {
 
 
 
+
+
+
+
+
+
+
+
   private savedPixelRatio = 1;
+
+
+
+
 
 
 
@@ -1093,17 +2185,35 @@ export class VRSystem {
 
 
 
+
+
+
+
   // VR 专属物品显示：玩家 group.visible=false 让 heldItem 不可见，
+
+
 
   // VR 时把物品移到右手 controller（rig 子物体）→ 永远可见
 
+
+
   private vrHeldItem: THREE.Group | null = null;
+
+
 
   private vrHeldId: string | null = null;
 
 
 
+
+
+
+
   private savedFar = 600;
+
+
+
+
 
 
 
@@ -1115,7 +2225,19 @@ export class VRSystem {
 
 
 
+
+
+
+
+
+
+
+
   private setupScene() {
+
+
+
+
 
 
 
@@ -1123,7 +2245,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 相机挂进 rig：rig 跟随玩家位置 + 快速转向角
+
+
+
+
 
 
 
@@ -1131,7 +2261,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.rig.rotation.y = this.snapYaw = 0;
+
+
+
+
 
 
 
@@ -1139,19 +2277,39 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.rig.add(camera);
+
+
+
+
 
 
 
     // VR 时物品挂右手 controller（玩家看不见时物品还能看见）
 
+
+
     this.vrHeldItem = new THREE.Group();
+
+
 
     this.vrHeldItem.position.set(0, -0.06, -0.12);
 
+
+
     this.vrHeldItem.rotation.set(-0.3, 0, 0);
 
+
+
     this.attachVrHeldItem();
+
+
+
+
 
 
 
@@ -1159,7 +2317,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     camera.rotation.set(0, 0, 0);
+
+
+
+
 
 
 
@@ -1167,11 +2333,23 @@ export class VRSystem {
 
 
 
+
+
+
+
     const r = this.host.renderer;
 
 
 
+
+
+
+
     for (let i = 0; i < 2; i++) {
+
+
+
+
 
 
 
@@ -1179,7 +2357,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.rig.add(c);
+
+
+
+
 
 
 
@@ -1187,7 +2373,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const hand = this.buildHand(i === 0 ? 0xe8b88a : 0xe8b88a);
+
+
+
+
 
 
 
@@ -1195,7 +2389,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.hands[i] = hand;
+
+
+
+
 
 
 
@@ -1203,7 +2405,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         this.inputs[i] = (e as unknown as { data: XRInputSource }).data;
+
+
+
+
 
 
 
@@ -1211,7 +2421,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       });
+
+
+
+
 
 
 
@@ -1219,7 +2437,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       c.addEventListener('selectstart', () => { this.triggerHeld[i] = true; this.onSelect(i); });
+
+
+
+
 
 
 
@@ -1227,7 +2453,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       // 激光线（对话选项面板出现时显示，指向哪个选项哪个发光）
+
+
+
+
 
 
 
@@ -1235,7 +2469,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         new THREE.BoxGeometry(0.006, 0.006, 3),
+
+
+
+
 
 
 
@@ -1243,7 +2485,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       );
+
+
+
+
 
 
 
@@ -1251,7 +2501,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       laser.visible = false;
+
+
+
+
 
 
 
@@ -1259,11 +2517,23 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.lasers[i] = laser;
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -1271,7 +2541,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     for (let i = 0; i < 2; i++) {
+
+
+
+
 
 
 
@@ -1279,7 +2557,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       cv.width = cv.height = 128;
+
+
+
+
 
 
 
@@ -1287,7 +2573,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       cx.font = '92px sans-serif';
+
+
+
+
 
 
 
@@ -1295,7 +2589,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       cx.textBaseline = 'middle';
+
+
+
+
 
 
 
@@ -1303,7 +2605,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const tex = new THREE.CanvasTexture(cv);
+
+
+
+
 
 
 
@@ -1311,7 +2621,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       sp.scale.setScalar(0.55);
+
+
+
+
 
 
 
@@ -1319,7 +2637,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       sp.visible = false;
+
+
+
+
 
 
 
@@ -1327,7 +2653,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.talkSprites[i] = sp;
+
+
+
+
 
 
 
@@ -1335,7 +2669,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 左手腕面板（状态手表：时间/金币/任务/每日任务）
+
+
+
+
 
 
 
@@ -1343,7 +2685,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.controllers[0].add(this.wrist);
+
+
+
+
 
 
 
@@ -1351,7 +2701,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.phone = this.buildPhone();
+
+
+
+
 
 
 
@@ -1359,7 +2717,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 悬浮对话面板（懒创建）
+
+
+
+
 
 
 
@@ -1367,49 +2733,105 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
 
 
 
   // 把 vrHeldItem 挂到右手 controller（controllers[1]）
 
+
+
   private attachVrHeldItem() {
+
+
 
     if (!this.vrHeldItem) return;
 
+
+
     const rc = this.controllers[1];
+
+
 
     if (!rc) return;
 
+
+
     rc.add(this.vrHeldItem);
+
+
 
     // 同步当前 selectedItem
 
+
+
     const sel = this.host.getSelectedItem?.();
+
+
 
     if (sel !== undefined) this.setVrHeld(sel);
 
+
+
   }
+
+
+
+
 
 
 
   // 更新 VR 时手上物品（game.ts 在 selectItem 后调 setHeldItem 时同时调这里）
 
+
+
   setVrHeld(item: string | null) {
+
+
 
     if (!this.vrHeldItem) return;
 
+
+
     this.vrHeldItem.clear();
+
+
 
     this.vrHeldId = item;
 
+
+
     if (!item) return;
+
+
 
     const isFruit = item === 'apple' || item === 'cherry' || item === 'orange' || item === 'peach';
 
+
+
     this.vrHeldItem.add(isFruit ? makeFruitDrop(item, 0.9) : makePokeBall(0.85));
 
+
+
   }
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1423,7 +2845,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.active = false;
+
+
+
+
 
 
 
@@ -1431,7 +2861,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const { scene, camera } = this.host;
+
+
+
+
 
 
 
@@ -1439,7 +2877,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     scene.remove(this.rig);
+
+
+
+
 
 
 
@@ -1447,7 +2893,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     camera.rotation.set(0, 0, 0);
+
+
+
+
 
 
 
@@ -1455,7 +2909,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     for (const sp of this.talkSprites) if (sp) { scene.remove(sp); sp.visible = false; }
+
+
+
+
 
 
 
@@ -1463,7 +2925,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     for (const pt of this.pointByHand) if (pt?.kind === 'pickup' && pt.mesh) pt.mesh.scale.setScalar(1);
+
+
+
+
 
 
 
@@ -1471,7 +2941,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.host.renderer.xr.enabled = false;
+
+
+
+
 
 
 
@@ -1479,7 +2957,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.host.renderer.setPixelRatio(this.savedPixelRatio);
+
+
+
+
 
 
 
@@ -1487,7 +2973,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.host.camera.updateProjectionMatrix();
+
+
+
+
 
 
 
@@ -1495,7 +2989,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (fog && this.savedFog) { fog.near = this.savedFog[0]; fog.far = this.savedFog[1]; this.savedFog = null; }
+
+
+
+
 
 
 
@@ -1503,11 +3005,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     store.patch({ vrActive: false });
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -1519,7 +3037,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private drAcc = 0; private drN = 0; private drCd = 0; private curPR = 0.5;
+
+
+
+
 
 
 
@@ -1527,7 +3053,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   // 跑步检测改用双手柄 Y 速度反相关（Godot 算法移植），不再用头部位置
+
+
+
+
 
 
 
@@ -1535,7 +3069,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private rightHandPos = new THREE.Vector3();
+
+
+
+
 
 
 
@@ -1543,7 +3085,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (!this.active) return;
+
+
+
+
 
 
 
@@ -1551,7 +3101,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 动态分辨率：按"用户移动速度"为主信号（用户体感的延迟来自"画面跟不上运动"，
+
+
+
+
 
 
 
@@ -1559,7 +3117,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 速度档位（march.speed 范围 0~3.8 m/s）：
+
+
+
+
 
 
 
@@ -1567,7 +3133,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     //   0.3~1.0    慢走     → 0.55
+
+
+
+
 
 
 
@@ -1575,7 +3149,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     //   > 2.5      跑步     → 0.35
+
+
+
+
 
 
 
@@ -1583,7 +3165,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const userSpeed = this.march.speed;
+
+
+
+
 
 
 
@@ -1591,7 +3181,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (userSpeed > 2.5) targetPR = 0.3;
+
+
+
+
 
 
 
@@ -1599,7 +3197,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     else if (userSpeed > 0.3) targetPR = 0.4;
+
+
+
+
 
 
 
@@ -1607,7 +3213,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.drAcc += dt; this.drN++; this.drCd -= dt;
+
+
+
+
 
 
 
@@ -1615,7 +3229,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const avg = this.drAcc / this.drN;
+
+
+
+
 
 
 
@@ -1623,7 +3245,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.lastAvgMs = avg * 1000;
+
+
+
+
 
 
 
@@ -1631,11 +3261,23 @@ export class VRSystem {
 
 
 
+
+
+
+
       else if (avg < 0.014) targetPR = Math.min(0.5, targetPR + 0.05); // 帧宽裕小幅回升
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -1643,7 +3285,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // + 非整数像素比造成 GPU texture 重分配抖动
+
+
+
+
 
 
 
@@ -1651,7 +3301,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.curPR = targetPR;
+
+
+
+
 
 
 
@@ -1659,7 +3317,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -1667,7 +3333,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     camera.getWorldDirection(this.tmpV);
+
+
+
+
 
 
 
@@ -1675,7 +3349,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.host.setViewYaw(viewYaw);
+
+
+
+
 
 
 
@@ -1683,7 +3365,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (this.controllers[0]) this.controllers[0].getWorldPosition(this.leftHandPos);
+
+
+
+
 
 
 
@@ -1691,7 +3381,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.march.update(this.leftHandPos, this.rightHandPos, now / 1000, dt);
+
+
+
+
 
 
 
@@ -1699,7 +3397,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 手柄按键（摇杆快速转向 + A/B 切工具）
+
+
+
+
 
 
 
@@ -1707,7 +3413,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 挥臂检测（双手都算；必须扣着该手扳机才命中工具——跑步摆臂不再误触）
+
+
+
+
 
 
 
@@ -1715,7 +3429,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const c = this.controllers[i];
+
+
+
+
 
 
 
@@ -1723,7 +3445,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (this.swings[i].update(c, dt, this.march.speed) && this.triggerHeld[i]) {
+
+
+
+
 
 
 
@@ -1731,7 +3461,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         this.pulse(i, 0.4 + this.swings[i].power * 0.6, 90);
+
+
+
+
 
 
 
@@ -1739,7 +3477,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -1747,7 +3493,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.refreshToolMesh();
+
+
+
+
 
 
 
@@ -1755,7 +3509,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.wristT -= dt;
+
+
+
+
 
 
 
@@ -1763,7 +3525,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 右手手机：左手射线悬停 + 定时重绘
+
+
+
+
 
 
 
@@ -1771,7 +3541,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.phoneT -= dt;
+
+
+
+
 
 
 
@@ -1779,7 +3557,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (this.phoneT <= 0) { this.phoneT = 0.25; this.drawPhone(); }
+
+
+
+
 
 
 
@@ -1787,7 +3573,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.updateWristBrightness(this.wrist);
+
+
+
+
 
 
 
@@ -1795,7 +3589,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 对话/提示面板
+
+
+
+
 
 
 
@@ -1803,7 +3605,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 指向拾取：手柄射线指着 8m 内的掉落物 → 高亮 + 激光指引（对话/开店时禁用）
+
+
+
+
 
 
 
@@ -1811,7 +3621,19 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -1823,7 +3645,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   // rig 贴本帧最新玩家位置（否则滞后一帧，转头/移动时场景轻微跟晃）
+
+
+
+
 
 
 
@@ -1831,7 +3661,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (!this.active) return;
+
+
+
+
 
 
 
@@ -1839,7 +3677,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.rig.position.set(p.x, p.y, p.z);
+
+
+
+
 
 
 
@@ -1847,7 +3693,19 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -1859,7 +3717,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private updatePointAim() {
+
+
+
+
 
 
 
@@ -1867,7 +3733,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     type Cand = { kind: 'pickup' | 'talk' | 'flower' | 'weed'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number; r2: number };
+
+
+
+
 
 
 
@@ -1875,23 +3749,47 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (!blocked) {
+
+
+
+
 
 
 
       cands = this.host.getPickups().map(p => ({ kind: 'pickup' as const, id: String(p.id), pos: p.pos, mesh: p.mesh, top: 0, r2: 0.36 })); // 半径 0.6m
 
+
+
       for (const f of this.host.getFlowers()) {
+
         const fy = this.host.groundY(f.x, f.z);
+
         cands.push({ kind: 'flower', id: String(f.id), pos: new THREE.Vector3(f.x, fy, f.z), top: fy + 0.6, r2: 0.64 });
+
       }
+
+
 
       for (const w of this.host.getWeeds()) {
+
         const wy = this.host.groundY(w.x, w.z);
+
         cands.push({ kind: 'weed', id: String(w.id), pos: new THREE.Vector3(w.x, wy, w.z), top: wy + 0.3, r2: 0.49 });
+
       }
 
+
+
       for (const t of this.host.getTalkTargets()) {
+
+
+
+
 
 
 
@@ -1899,11 +3797,23 @@ export class VRSystem {
 
 
 
+
+
+
+
       }
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -1911,7 +3821,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     for (let hand = 0; hand < 2; hand++) {
+
+
+
+
 
 
 
@@ -1919,7 +3837,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       let best: Cand | null = null;
+
+
+
+
 
 
 
@@ -1927,7 +3853,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (c && c.visible) {
+
+
+
+
 
 
 
@@ -1935,7 +3869,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         const dir = this.tmpB.set(0, 0, -1).applyQuaternion(c.getWorldQuaternion(this.tmpQ));
+
+
+
+
 
 
 
@@ -1943,7 +3885,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           this.tmpV.copy(cd.pos).sub(origin);
+
+
+
+
 
 
 
@@ -1951,7 +3901,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           if (t < 0.3 || t > 8) continue; // 8 米范围内
+
+
+
+
 
 
 
@@ -1959,7 +3917,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           if (perp2 < cd.r2 && t < bestT) { bestT = t; best = cd; }
+
+
+
+
 
 
 
@@ -1967,7 +3933,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       }
+
+
+
+
 
 
 
@@ -1975,7 +3949,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       // 指着时亮出激光并缩放到目标距离，指哪打哪
+
+
+
+
 
 
 
@@ -1983,7 +3965,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (laser) {
+
+
+
+
 
 
 
@@ -1991,7 +3981,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           laser.visible = true;
+
+
+
+
 
 
 
@@ -1999,7 +3997,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           laser.position.z = -bestT / 2;
+
+
+
+
 
 
 
@@ -2007,7 +4013,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           laser.visible = false;
+
+
+
+
 
 
 
@@ -2015,7 +4029,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           laser.position.z = -1.5;
+
+
+
+
 
 
 
@@ -2023,7 +4045,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       }
+
+
+
+
 
 
 
@@ -2031,7 +4061,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const sp = this.talkSprites[hand];
+
+
+
+
 
 
 
@@ -2039,7 +4077,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         if (best?.kind === 'talk') {
+
+
+
+
 
 
 
@@ -2047,7 +4093,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           sp.position.set(best.pos.x, best.pos.y + best.top + 0.3, best.pos.z);
+
+
+
+
 
 
 
@@ -2055,11 +4109,23 @@ export class VRSystem {
 
 
 
+
+
+
+
       }
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -2067,7 +4133,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     for (let hand = 0; hand < 2; hand++) {
+
+
+
+
 
 
 
@@ -2075,7 +4149,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (prev?.kind === 'pickup' && prev.mesh && prev.mesh !== next[hand]?.mesh) prev.mesh.scale.setScalar(1);
+
+
+
+
 
 
 
@@ -2083,7 +4165,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (nxt?.kind === 'pickup' && nxt.mesh) nxt.mesh.scale.setScalar(1.45);
+
+
+
+
 
 
 
@@ -2091,11 +4181,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.pointByHand = next;
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -2107,7 +4213,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private applyLocomotion(viewYaw: number, dt: number) {
+
+
+
+
 
 
 
@@ -2115,7 +4229,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const touch = this.host.touch;
+
+
+
+
 
 
 
@@ -2123,7 +4245,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // camYaw 已由 setViewYaw 同步成头部朝向：iz=-1 即朝面前方向走
+
+
+
+
 
 
 
@@ -2131,7 +4261,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     touch.dx = 0;
+
+
+
+
 
 
 
@@ -2139,7 +4277,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     touch.run = this.march.running;
+
+
+
+
 
 
 
@@ -2147,7 +4293,19 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -2159,7 +4317,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private btnPrev: Record<string, boolean> = {};
+
+
+
+
 
 
 
@@ -2167,7 +4333,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private wristPage: 'status' | 'quest' = 'status'; // 左手腕页面
+
+
+
+
 
 
 
@@ -2175,7 +4349,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private selMode = false;   // 手机选项模式（下摇进入）
+
+
+
+
 
 
 
@@ -2183,7 +4365,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private pollGamepads(dt: number) {
+
+
+
+
 
 
 
@@ -2191,7 +4381,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     for (let i = 0; i < 2; i++) {
+
+
+
+
 
 
 
@@ -2199,7 +4397,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const gp = src?.gamepad;
+
+
+
+
 
 
 
@@ -2207,7 +4413,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       // 扳机状态轮询同步（双保险：selectend 事件丢失时仍能正确松开）
+
+
+
+
 
 
 
@@ -2215,7 +4429,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const ax = gp.axes[2] ?? gp.axes[0] ?? 0;
+
+
+
+
 
 
 
@@ -2223,7 +4445,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (this.stickCd <= 0) {
+
+
+
+
 
 
 
@@ -2231,7 +4461,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           // 左手摇杆：左右翻左手腕页面
+
+
+
+
 
 
 
@@ -2239,7 +4477,15 @@ export class VRSystem {
 
 
 
+
+
+
+
             this.wristPage = this.wristPage === 'status' ? 'quest' : 'status';
+
+
+
+
 
 
 
@@ -2247,7 +4493,15 @@ export class VRSystem {
 
 
 
+
+
+
+
             this.pulse(0, 0.2, 25);
+
+
+
+
 
 
 
@@ -2255,7 +4509,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           }
+
+
+
+
 
 
 
@@ -2263,7 +4525,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           // 右手摇杆：翻手机页 / 选项模式导航
+
+
+
+
 
 
 
@@ -2271,7 +4541,15 @@ export class VRSystem {
 
 
 
+
+
+
+
             if (Math.abs(ax) > 0.6) {
+
+
+
+
 
 
 
@@ -2279,7 +4557,15 @@ export class VRSystem {
 
 
 
+
+
+
+
               const next = (idx + (ax > 0 ? 1 : -1) + this.phonePages.length) % this.phonePages.length;
+
+
+
+
 
 
 
@@ -2287,7 +4573,15 @@ export class VRSystem {
 
 
 
+
+
+
+
               this.stickCd = 0.25;
+
+
+
+
 
 
 
@@ -2295,11 +4589,23 @@ export class VRSystem {
 
 
 
+
+
+
+
               this.drawPhone();
 
 
 
+
+
+
+
             } else if (ay > 0.6) {
+
+
+
+
 
 
 
@@ -2307,7 +4613,15 @@ export class VRSystem {
 
 
 
+
+
+
+
               if (this.pageItems().length > 0) {
+
+
+
+
 
 
 
@@ -2315,7 +4629,15 @@ export class VRSystem {
 
 
 
+
+
+
+
                 this.selIdx = 0;
+
+
+
+
 
 
 
@@ -2323,7 +4645,15 @@ export class VRSystem {
 
 
 
+
+
+
+
                 this.pulse(1, 0.3, 35);
+
+
+
+
 
 
 
@@ -2331,11 +4661,23 @@ export class VRSystem {
 
 
 
+
+
+
+
               }
 
 
 
+
+
+
+
             }
+
+
+
+
 
 
 
@@ -2343,7 +4685,15 @@ export class VRSystem {
 
 
 
+
+
+
+
             const items = this.pageItems();
+
+
+
+
 
 
 
@@ -2351,7 +4701,15 @@ export class VRSystem {
 
 
 
+
+
+
+
               this.selIdx = (this.selIdx + (ax > 0 ? 1 : -1) + items.length) % items.length;
+
+
+
+
 
 
 
@@ -2359,11 +4717,23 @@ export class VRSystem {
 
 
 
+
+
+
+
               this.pulse(1, 0.15, 20);
 
 
 
+
+
+
+
               this.drawPhone();
+
+
+
+
 
 
 
@@ -2371,7 +4741,15 @@ export class VRSystem {
 
 
 
+
+
+
+
               // 上摇：确认当前选项
+
+
+
+
 
 
 
@@ -2379,7 +4757,15 @@ export class VRSystem {
 
 
 
+
+
+
+
               if (btn) this.execPhoneBtn(btn.action);
+
+
+
+
 
 
 
@@ -2387,7 +4773,15 @@ export class VRSystem {
 
 
 
+
+
+
+
               this.stickCd = 0.25;
+
+
+
+
 
 
 
@@ -2395,7 +4789,15 @@ export class VRSystem {
 
 
 
+
+
+
+
               // 再下摇：退出选项模式
+
+
+
+
 
 
 
@@ -2403,7 +4805,15 @@ export class VRSystem {
 
 
 
+
+
+
+
               this.stickCd = 0.25;
+
+
+
+
 
 
 
@@ -2411,7 +4821,15 @@ export class VRSystem {
 
 
 
+
+
+
+
             }
+
+
+
+
 
 
 
@@ -2419,11 +4837,23 @@ export class VRSystem {
 
 
 
+
+
+
+
         }
 
 
 
+
+
+
+
       }
+
+
+
+
 
 
 
@@ -2431,7 +4861,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const pressed = (n: number) => !!gp.buttons[n]?.pressed;
+
+
+
+
 
 
 
@@ -2439,7 +4877,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       for (const [n, dir] of [[4, 1], [5, -1]] as [number, number][]) {
+
+
+
+
 
 
 
@@ -2447,7 +4893,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         this.btnPrev[key(n)] = pressed(n);
+
+
+
+
 
 
 
@@ -2455,11 +4909,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -2471,7 +4941,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private pageItems() {
+
+
+
+
 
 
 
@@ -2479,11 +4957,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     return this.phoneBtns.filter(b => b.action.startsWith(prefix));
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -2495,7 +4989,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private onSelect(hand: number) {
+
+
+
+
 
 
 
@@ -2503,7 +5005,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 右手扳机 + 手机选项模式 = 确认光标项
+
+
+
+
 
 
 
@@ -2511,7 +5021,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const items = this.pageItems();
+
+
+
+
 
 
 
@@ -2519,7 +5037,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (b) this.execPhoneBtn(b.action);
+
+
+
+
 
 
 
@@ -2527,7 +5053,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.pulse(1, 0.5, 60);
+
+
+
+
 
 
 
@@ -2535,7 +5069,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -2543,7 +5085,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (hand === 0 && this.phoneHover >= 0 && this.phoneBtns[this.phoneHover]) {
+
+
+
+
 
 
 
@@ -2551,7 +5101,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.pulse(0, 0.5, 60);
+
+
+
+
 
 
 
@@ -2559,7 +5117,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -2567,7 +5133,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (dlg) {
+
+
+
+
 
 
 
@@ -2575,7 +5149,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         // 激光指到选项的那只手才能确认
+
+
+
+
 
 
 
@@ -2583,7 +5165,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         if (idx >= 0 && this.btnRects[idx]) {
+
+
+
+
 
 
 
@@ -2591,7 +5181,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         }
+
+
+
+
 
 
 
@@ -2599,7 +5197,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         commands.push({ type: 'closeDialog' });
+
+
+
+
 
 
 
@@ -2607,11 +5213,23 @@ export class VRSystem {
 
 
 
+
+
+
+
       return;
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -2619,7 +5237,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const pt = this.pointByHand[hand];
+
+
+
+
 
 
 
@@ -2627,10 +5253,21 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (pt.kind === 'talk') this.host.onPointTalk(pt.id);
+
       else if (pt.kind === 'flower') this.host.onPointFlower(+pt.id);
+
       else if (pt.kind === 'weed') this.host.onPointWeed(+pt.id);
+
       else this.host.onPointPickup(+pt.id);
+
+
+
+
 
 
 
@@ -2638,7 +5275,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       return;
+
+
+
+
 
 
 
@@ -2646,11 +5291,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.host.onVrTrigger();
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -2662,7 +5323,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   pulse(hand: number, amp: number, ms: number) {
+
+
+
+
 
 
 
@@ -2670,7 +5339,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const act = (src?.gamepad as unknown as { hapticActuators?: { pulse(a: number, m: number): void }[] })?.hapticActuators?.[0];
+
+
+
+
 
 
 
@@ -2678,7 +5355,19 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -2690,7 +5379,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private buildHand(skin: number) {
+
+
+
+
 
 
 
@@ -2698,7 +5395,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const skinMat = new THREE.MeshLambertMaterial({ color: skin });
+
+
+
+
 
 
 
@@ -2706,7 +5411,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const palm = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.05, 0.11), skinMat);
+
+
+
+
 
 
 
@@ -2714,7 +5427,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     thumb.position.set(0.055, 0, 0.02);
+
+
+
+
 
 
 
@@ -2722,7 +5443,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     sleeve.position.set(0, 0, 0.1);
+
+
+
+
 
 
 
@@ -2730,11 +5459,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     return g;
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -2746,7 +5491,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private refreshToolMesh(force = false) {
+
+
+
+
 
 
 
@@ -2754,7 +5507,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (!force && tool === this.currentTool) return;
+
+
+
+
 
 
 
@@ -2762,7 +5523,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const hand = this.hands[1];
+
+
+
+
 
 
 
@@ -2770,7 +5539,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (this.toolMesh) { hand.remove(this.toolMesh); this.toolMesh = null; }
+
+
+
+
 
 
 
@@ -2778,7 +5555,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const g = new THREE.Group();
+
+
+
+
 
 
 
@@ -2786,7 +5571,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const metal = new THREE.MeshLambertMaterial({ color: 0x9ab0c9 });
+
+
+
+
 
 
 
@@ -2794,7 +5587,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     handle.position.z = -0.2;
+
+
+
+
 
 
 
@@ -2802,7 +5603,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (tool === 'axe') {
+
+
+
+
 
 
 
@@ -2810,11 +5619,23 @@ export class VRSystem {
 
 
 
+
+
+
+
       head.position.set(0.06, 0, -0.42);
 
 
 
+
+
+
+
       g.add(head);
+
+
+
+
 
 
 
@@ -2822,7 +5643,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const head = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.02, 0.16), metal);
+
+
+
+
 
 
 
@@ -2830,7 +5659,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       g.add(head);
+
+
+
+
 
 
 
@@ -2838,7 +5675,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const ring = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.02, 6, 12), wood);
+
+
+
+
 
 
 
@@ -2846,7 +5691,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const mesh = new THREE.Mesh(new THREE.CircleGeometry(0.15, 10), new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, side: THREE.DoubleSide }));
+
+
+
+
 
 
 
@@ -2854,7 +5707,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       g.add(ring, mesh);
+
+
+
+
 
 
 
@@ -2862,7 +5723,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       handle.scale.z = 1.8;
+
+
+
+
 
 
 
@@ -2870,7 +5739,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       line.position.set(0, -0.02, -0.85);
+
+
+
+
 
 
 
@@ -2878,7 +5755,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -2886,11 +5771,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     hand.add(g);
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -2902,7 +5803,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   // ---------------- 左手腕面板（状态手表） ----------------
+
+
+
+
 
 
 
@@ -2910,7 +5819,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const c = document.createElement('canvas');
+
+
+
+
 
 
 
@@ -2918,7 +5835,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.wristCtx = c.getContext('2d')!;
+
+
+
+
 
 
 
@@ -2926,7 +5851,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const m = new THREE.Mesh(
+
+
+
+
 
 
 
@@ -2934,7 +5867,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       new THREE.MeshBasicMaterial({ map: this.wristTex, transparent: true }),
+
+
+
+
 
 
 
@@ -2942,7 +5883,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 贴在左手背上方，抬腕可见
+
+
+
+
 
 
 
@@ -2950,7 +5899,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     m.rotation.x = -Math.PI / 3;
+
+
+
+
 
 
 
@@ -2958,7 +5915,19 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -2970,11 +5939,23 @@ export class VRSystem {
 
 
 
+
+
+
+
     const ctx = this.wristCtx;
+
+
 
     ctx.save();
 
+
+
     ctx.scale(0.5, 0.5); // 贴图坐标系 ×0.5 缩放（旧坐标按原尺寸写）
+
+
+
+
 
 
 
@@ -2982,7 +5963,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.clearRect(0, 0, 384, 288);
+
+
+
+
 
 
 
@@ -2990,7 +5979,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.beginPath();
+
+
+
+
 
 
 
@@ -2998,7 +5995,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.fill();
+
+
+
+
 
 
 
@@ -3006,7 +6011,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.font = 'bold 36px sans-serif';
+
+
+
+
 
 
 
@@ -3014,7 +6027,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.font = '22px sans-serif';
+
+
+
+
 
 
 
@@ -3022,7 +6043,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.fillText(s.dateText, 170, 44);
+
+
+
+
 
 
 
@@ -3030,7 +6059,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.font = 'bold 26px sans-serif';
+
+
+
+
 
 
 
@@ -3038,7 +6075,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 页标
+
+
+
+
 
 
 
@@ -3046,7 +6091,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.font = '18px sans-serif';
+
+
+
+
 
 
 
@@ -3054,7 +6107,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (this.wristPage === 'status') {
+
+
+
+
 
 
 
@@ -3062,7 +6123,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillStyle = this.march.speed > 0.1 ? '#8aff8a' : '#8899aa';
+
+
+
+
 
 
 
@@ -3070,7 +6139,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillText(`🚶 ${this.march.speed.toFixed(1)}`, 300, 86);
+
+
+
+
 
 
 
@@ -3078,7 +6155,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillStyle = this.lastAvgMs > 14 ? '#ff9a7a' : '#7fd97f';
+
+
+
+
 
 
 
@@ -3086,7 +6171,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillText(`⏱ ${this.lastAvgMs.toFixed(0)}ms`, 300, 114);
+
+
+
+
 
 
 
@@ -3094,7 +6187,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillStyle = '#b8e6b8';
+
+
+
+
 
 
 
@@ -3102,7 +6203,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillText(toolName[s.tool] ?? s.tool, 18, 140);
+
+
+
+
 
 
 
@@ -3110,7 +6219,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       // 任务页：当前目标 + 每日任务
+
+
+
+
 
 
 
@@ -3118,7 +6235,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (s.quest) {
+
+
+
+
 
 
 
@@ -3126,7 +6251,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         ctx.font = 'bold 22px sans-serif';
+
+
+
+
 
 
 
@@ -3134,11 +6267,23 @@ export class VRSystem {
 
 
 
+
+
+
+
         y += 34;
 
 
 
+
+
+
+
       }
+
+
+
+
 
 
 
@@ -3146,7 +6291,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         ctx.fillStyle = t.done ? '#7fd97f' : '#c8d4e0';
+
+
+
+
 
 
 
@@ -3154,7 +6307,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         ctx.fillText(`${t.done ? '✅' : '▫️'} ${t.icon} ${t.text} ${Math.min(t.progress, t.need)}/${t.need}`, 18, y);
+
+
+
+
 
 
 
@@ -3162,11 +6323,23 @@ export class VRSystem {
 
 
 
+
+
+
+
       }
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -3174,7 +6347,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillStyle = '#ffffff';
+
+
+
+
 
 
 
@@ -3182,7 +6363,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillText(s.prompt.slice(0, 16), 18, 276);
+
+
+
+
 
 
 
@@ -3190,7 +6379,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.wristTex.needsUpdate = true;
+
+
+
+
 
 
 
@@ -3198,7 +6395,19 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -3210,7 +6419,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private buildPhone() {
+
+
+
+
 
 
 
@@ -3218,7 +6435,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     c.width = 256; c.height = 360;
+
+
+
+
 
 
 
@@ -3226,7 +6451,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.phoneTex = new THREE.CanvasTexture(c);
+
+
+
+
 
 
 
@@ -3234,7 +6467,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       new THREE.PlaneGeometry(0.17, 0.24),
+
+
+
+
 
 
 
@@ -3242,7 +6483,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     );
+
+
+
+
 
 
 
@@ -3250,7 +6499,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     m.rotation.x = -Math.PI / 3;
+
+
+
+
 
 
 
@@ -3258,7 +6515,19 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -3270,11 +6539,25 @@ export class VRSystem {
 
 
 
+
+
+
+
     const ctx = this.phoneCtx;
+
+
 
     ctx.save();
 
+
+
     ctx.scale(0.5, 0.5); // 贴图从 512×720 降到 256×360，所有坐标系 ×0.5 缩放
+
+
+
+
+
+
 
 
 
@@ -3284,7 +6567,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.clearRect(0, 0, 512, 720);
+
+
+
+
 
 
 
@@ -3292,7 +6583,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.beginPath();
+
+
+
+
 
 
 
@@ -3300,7 +6599,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.fill();
+
+
+
+
 
 
 
@@ -3308,7 +6615,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 顶部标签页（三页）
+
+
+
+
 
 
 
@@ -3316,7 +6631,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     tabs.forEach(([label, tab], i) => {
+
+
+
+
 
 
 
@@ -3324,7 +6647,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const active = this.phoneTab === tab;
+
+
+
+
 
 
 
@@ -3332,7 +6663,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillStyle = hover ? '#5a7fd9' : active ? '#3a5aa8' : '#2a3a52';
+
+
+
+
 
 
 
@@ -3340,7 +6679,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.roundRect(bx, by, bw, bh, 12);
+
+
+
+
 
 
 
@@ -3348,7 +6695,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (hover) { ctx.strokeStyle = '#ffe98a'; ctx.lineWidth = 4; ctx.stroke(); }
+
+
+
+
 
 
 
@@ -3356,7 +6711,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.font = 'bold 26px sans-serif';
+
+
+
+
 
 
 
@@ -3364,7 +6727,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.phoneBtns.push({ x: bx, y: by, w: bw, h: bh, action: `tab:${tab}` });
+
+
+
+
 
 
 
@@ -3372,7 +6743,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (this.phoneTab === 'map') this.drawPhoneMap(ctx, s);
+
+
+
+
 
 
 
@@ -3380,7 +6759,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     else this.drawPhoneTool(ctx, s);
+
+
+
+
 
 
 
@@ -3388,11 +6775,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.restore();
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -3404,7 +6807,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private btnGlow(btnIndex: number, itemIdx: number) {
+
+
+
+
 
 
 
@@ -3412,7 +6823,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     return this.phoneHover === btnIndex;
+
+
+
+
 
 
 
@@ -3424,12 +6843,29 @@ export class VRSystem {
 
 
 
+
+
+
+
+
+
+
+
   private drawPhoneMap(ctx: CanvasRenderingContext2D, s: typeof store.state) {
+
+
 
     // 地图图片（游戏内地图同一张）
 
 
+
+
+
     if (s.mapImage && s.mapImage !== this.mapImgSrc) {
+
+
+
+
 
 
 
@@ -3437,7 +6873,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.mapImg = new Image();
+
+
+
+
 
 
 
@@ -3445,7 +6889,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -3453,7 +6905,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.imageSmoothingEnabled = false;
+
+
+
+
 
 
 
@@ -3461,7 +6921,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -3469,7 +6937,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const px = ((s.mapPlayer.x + 96) / 192) * 480 + 16;
+
+
+
+
 
 
 
@@ -3477,7 +6953,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.fillStyle = '#ff4444';
+
+
+
+
 
 
 
@@ -3485,7 +6969,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.arc(px, pz, 8, 0, Math.PI * 2);
+
+
+
+
 
 
 
@@ -3493,7 +6985,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.strokeStyle = '#ffffff';
+
+
+
+
 
 
 
@@ -3501,7 +7001,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.stroke();
+
+
+
+
 
 
 
@@ -3509,7 +7017,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     for (const m of this.host.getMapMarkers()) {
+
+
+
+
 
 
 
@@ -3517,7 +7033,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const mz = ((m.z + 96) / 192) * 480 + 86;
+
+
+
+
 
 
 
@@ -3525,7 +7049,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.beginPath();
+
+
+
+
 
 
 
@@ -3533,7 +7065,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fill();
+
+
+
+
 
 
 
@@ -3541,7 +7081,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.lineWidth = 2;
+
+
+
+
 
 
 
@@ -3549,7 +7097,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.font = 'bold 14px sans-serif';
+
+
+
+
 
 
 
@@ -3557,7 +7113,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.strokeStyle = 'rgba(10,16,26,0.9)';
+
+
+
+
 
 
 
@@ -3565,7 +7129,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillStyle = '#ffffff';
+
+
+
+
 
 
 
@@ -3573,7 +7145,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -3581,7 +7161,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.font = '20px sans-serif';
+
+
+
+
 
 
 
@@ -3592,7 +7180,22 @@ export class VRSystem {
 
 
 
+
+
+
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -3602,7 +7205,13 @@ export class VRSystem {
 
   private drawPhoneBag(ctx: CanvasRenderingContext2D, _s: typeof store.state) {
 
+
+
     const inv = this.host.getInventory().filter(([, n]) => n > 0);
+
+
+
+
 
 
 
@@ -3610,7 +7219,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.font = 'bold 20px sans-serif';
+
+
+
+
 
 
 
@@ -3618,7 +7235,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     let itemIdx = 0;
+
+
+
+
 
 
 
@@ -3626,7 +7251,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const col = i % 4, row = Math.floor(i / 4);
+
+
+
+
 
 
 
@@ -3634,7 +7267,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const btnIdx = this.phoneBtns.length;
+
+
+
+
 
 
 
@@ -3642,7 +7283,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillStyle = glow ? '#5a7fd9' : '#2a3a52';
+
+
+
+
 
 
 
@@ -3650,7 +7299,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.roundRect(bx, by, bw, bh, 12);
+
+
+
+
 
 
 
@@ -3658,7 +7315,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (glow) { ctx.strokeStyle = '#ffe98a'; ctx.lineWidth = 4; ctx.stroke(); }
+
+
+
+
 
 
 
@@ -3666,7 +7331,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.font = '40px sans-serif';
+
+
+
+
 
 
 
@@ -3674,7 +7347,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillStyle = '#ffffff';
+
+
+
+
 
 
 
@@ -3682,7 +7363,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillText(`×${n}`, bx + 52, by + 84);
+
+
+
+
 
 
 
@@ -3690,7 +7379,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       itemIdx++;
+
+
+
+
 
 
 
@@ -3698,7 +7395,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (!inv.length) {
+
+
+
+
 
 
 
@@ -3706,7 +7411,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.font = '22px sans-serif';
+
+
+
+
 
 
 
@@ -3714,7 +7427,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -3722,7 +7443,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (this.bagMsgT > 0 && this.bagMsg) {
+
+
+
+
 
 
 
@@ -3730,11 +7459,23 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.font = '20px sans-serif';
 
 
 
+
+
+
+
       ctx.fillText(this.bagMsg.slice(0, 24), 18, 700);
+
+
+
+
 
 
 
@@ -3745,7 +7486,22 @@ export class VRSystem {
 
 
 
+
+
+
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -3757,9 +7513,19 @@ export class VRSystem {
 
 
 
+
+
+
+
   private drawPhoneTool(ctx: CanvasRenderingContext2D, s: typeof store.state) {
 
+
+
     const tools: [string, string, string][] = [
+
+
+
+
 
 
 
@@ -3767,7 +7533,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ];
+
+
+
+
 
 
 
@@ -3775,7 +7549,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.font = 'bold 20px sans-serif';
+
+
+
+
 
 
 
@@ -3783,7 +7565,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     let itemIdx = 0;
+
+
+
+
 
 
 
@@ -3791,7 +7581,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const col = i % 3, row = Math.floor(i / 3);
+
+
+
+
 
 
 
@@ -3799,7 +7597,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const unlocked = this.host.hasTool(t);
+
+
+
+
 
 
 
@@ -3807,7 +7613,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const btnIdx = this.phoneBtns.length;
+
+
+
+
 
 
 
@@ -3815,7 +7629,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillStyle = glow ? '#5a7fd9' : active ? '#3a6a48' : '#2a3a52';
+
+
+
+
 
 
 
@@ -3823,7 +7645,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.roundRect(bx, by, bw, bh, 16);
+
+
+
+
 
 
 
@@ -3831,7 +7661,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (glow) { ctx.strokeStyle = '#ffe98a'; ctx.lineWidth = 5; ctx.stroke(); }
+
+
+
+
 
 
 
@@ -3839,7 +7677,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.font = '72px sans-serif';
+
+
+
+
 
 
 
@@ -3847,7 +7693,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.font = 'bold 26px sans-serif';
+
+
+
+
 
 
 
@@ -3855,7 +7709,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillText(name, bx + 30, by + 150);
+
+
+
+
 
 
 
@@ -3863,7 +7725,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (unlocked) {
+
+
+
+
 
 
 
@@ -3871,7 +7741,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         itemIdx++;
+
+
+
+
 
 
 
@@ -3879,7 +7757,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     });
+
+
+
+
 
 
 
@@ -3887,7 +7773,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const cur = tools.find(([t]) => t === s.tool);
+
+
+
+
 
 
 
@@ -3895,7 +7789,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.font = 'bold 24px sans-serif';
+
+
+
+
 
 
 
@@ -3905,7 +7807,21 @@ export class VRSystem {
 
 
 
+
+
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -3917,7 +7833,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const [kind, payload] = action.split(':');
+
+
+
+
 
 
 
@@ -3925,30 +7849,65 @@ export class VRSystem {
 
 
 
+
+
+
+
     else if (kind === 'tool') this.host.onSelectTool(payload);
+
+
+
+
 
 
 
     else if (kind === 'item') {
 
+
+
       const item = ITEMS[payload];
+
+
 
       const n = this.host.getInventory().find(([id]) => id === payload)?.[1] ?? 0;
 
+
+
       this.bagMsg = item ? `${item.icon} ${item.name} ×${n}　${item.desc ?? ''}` : '';
+
+
 
       this.bagMsgT = 5;
 
+
+
       // 背包点选物品 → 发 selectItem 命令，物品才能拿在手上 / 被吃掉 / 播种
 
+
+
       commands.push({ type: 'selectItem', item: payload });
+
+
 
     }
 
 
 
 
+
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -3960,7 +7919,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private updatePhoneHover() {
+
+
+
+
 
 
 
@@ -3968,7 +7935,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const c = this.controllers[0];
+
+
+
+
 
 
 
@@ -3976,7 +7951,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const hit = this.raycastPanel(c, this.phone, 0.17, 0.24);
+
+
+
+
 
 
 
@@ -3984,7 +7967,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const u = hit[0] * 512, v = hit[1] * 720;
+
+
+
+
 
 
 
@@ -3992,7 +7983,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (u >= b.x && u <= b.x + b.w && v >= b.y && v <= b.y + b.h) this.phoneHover = i;
+
+
+
+
 
 
 
@@ -4000,7 +7999,19 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -4012,7 +8023,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private raycastPanel(ctrl: THREE.Object3D, panel: THREE.Object3D, w: number, h: number): [number, number] | null {
+
+
+
+
 
 
 
@@ -4020,7 +8039,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const dir = ctrl.getWorldDirection(new THREE.Vector3()).negate();
+
+
+
+
 
 
 
@@ -4028,7 +8055,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const pw = panel.getWorldPosition(new THREE.Vector3());
+
+
+
+
 
 
 
@@ -4036,7 +8071,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (Math.abs(denom) < 1e-4) return null;
+
+
+
+
 
 
 
@@ -4044,7 +8087,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (t < 0 || t > 1.5) return null;
+
+
+
+
 
 
 
@@ -4052,7 +8103,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 面板局部坐标（考虑父级变换）
+
+
+
+
 
 
 
@@ -4060,7 +8119,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const local = hitP.applyMatrix4(inv);
+
+
+
+
 
 
 
@@ -4068,7 +8135,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (u < -0.1 || u > 1.1 || v < -0.1 || v > 1.1) return null;
+
+
+
+
 
 
 
@@ -4076,7 +8151,19 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -4088,7 +8175,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private updateWristBrightness(panel: THREE.Mesh) {
+
+
+
+
 
 
 
@@ -4096,7 +8191,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const toEye = this.host.camera.getWorldPosition(new THREE.Vector3()).sub(panel.getWorldPosition(new THREE.Vector3())).normalize();
+
+
+
+
 
 
 
@@ -4104,11 +8207,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     (panel.material as THREE.MeshBasicMaterial).opacity = 0.5 + 0.5 * facing;
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -4120,7 +8239,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private ensureDialogPanel() {
+
+
+
+
 
 
 
@@ -4128,7 +8255,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const c = document.createElement('canvas');
+
+
+
+
 
 
 
@@ -4136,7 +8271,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.dialogCtx = c.getContext('2d')!;
+
+
+
+
 
 
 
@@ -4144,7 +8287,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const g = new THREE.Group();
+
+
+
+
 
 
 
@@ -4152,7 +8303,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       new THREE.PlaneGeometry(1.3, 0.65),
+
+
+
+
 
 
 
@@ -4160,7 +8319,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     );
+
+
+
+
 
 
 
@@ -4168,7 +8335,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     g.add(m);
+
+
+
+
 
 
 
@@ -4176,11 +8351,27 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.host.scene.add(g);
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
 
 
 
@@ -4192,7 +8383,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const s = store.state;
+
+
+
+
 
 
 
@@ -4200,7 +8399,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (!content) {
+
+
+
+
 
 
 
@@ -4208,7 +8415,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.dialogKey = '';
+
+
+
+
 
 
 
@@ -4216,7 +8431,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     }
+
+
+
+
 
 
 
@@ -4224,7 +8447,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const p = this.dialogPanel!;
+
+
+
+
 
 
 
@@ -4232,7 +8463,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 面板放在玩家前方 2.2m、视线高度，缓慢跟随视线（不锁死，避免压迫感）
+
+
+
+
 
 
 
@@ -4240,7 +8479,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const eyeY = playerPos.y + (camera.position.y || 1.5);
+
+
+
+
 
 
 
@@ -4248,7 +8495,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const tz = playerPos.z - Math.cos(viewYaw) * 2.0;
+
+
+
+
 
 
 
@@ -4256,7 +8511,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 面板放在胸口高度：视线稍向下看，不会挡住面前宝可梦的脸
+
+
+
+
 
 
 
@@ -4264,7 +8527,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     p.position.z += (tz - p.position.z) * Math.min(1, dt * 4);
+
+
+
+
 
 
 
@@ -4272,7 +8543,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 内容变了才重绘
+
+
+
+
 
 
 
@@ -4280,7 +8559,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (key !== this.dialogKey) {
+
+
+
+
 
 
 
@@ -4288,7 +8575,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       this.drawDialog(content as { name?: string; text?: string; actions?: { label: string; command: string }[]; title?: string; icon?: string; desc?: string });
+
+
+
+
 
 
 
@@ -4296,7 +8591,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     // 右手射线指向按钮 → 高亮
+
+
+
+
 
 
 
@@ -4304,7 +8607,21 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -4318,15 +8635,31 @@ export class VRSystem {
 
 
 
+
+
+
+
     const ctx = this.dialogCtx;
+
+
+
+
 
 
 
     ctx.save();
 
+
+
     ctx.scale(0.5, 0.5); // 贴图从 1024×512 降到 512×256，所有坐标 ×0.5 缩放
 
+
+
     ctx.clearRect(0, 0, 1024, 512);
+
+
+
+
 
 
 
@@ -4334,7 +8667,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.beginPath();
+
+
+
+
 
 
 
@@ -4342,7 +8683,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.fill();
+
+
+
+
 
 
 
@@ -4350,7 +8699,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     ctx.lineWidth = 6;
+
+
+
+
 
 
 
@@ -4358,7 +8715,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.btnRects = [];
+
+
+
+
 
 
 
@@ -4366,7 +8731,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       // toast
+
+
+
+
 
 
 
@@ -4374,7 +8747,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillStyle = '#5a4632';
+
+
+
+
 
 
 
@@ -4382,7 +8763,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.font = '38px sans-serif';
+
+
+
+
 
 
 
@@ -4390,7 +8779,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillText(d.desc ?? '', 48, 160);
+
+
+
+
 
 
 
@@ -4398,7 +8795,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.font = 'bold 44px sans-serif';
+
+
+
+
 
 
 
@@ -4406,7 +8811,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.fillText(d.name ?? '', 48, 72);
+
+
+
+
 
 
 
@@ -4414,7 +8827,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       ctx.font = '36px sans-serif';
+
+
+
+
 
 
 
@@ -4422,7 +8843,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const text = d.text ?? '';
+
+
+
+
 
 
 
@@ -4430,7 +8859,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       for (const rawLine of text.split('\n')) {
+
+
+
+
 
 
 
@@ -4438,7 +8875,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         for (const ch of rawLine) {
+
+
+
+
 
 
 
@@ -4446,7 +8891,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           line += ch;
+
+
+
+
 
 
 
@@ -4454,7 +8907,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         ctx.fillText(line, 48, y);
+
+
+
+
 
 
 
@@ -4462,7 +8923,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       }
+
+
+
+
 
 
 
@@ -4470,7 +8939,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const acts = d.actions ?? [];
+
+
+
+
 
 
 
@@ -4478,7 +8955,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         const bw = Math.max(280, ctx.measureText(a.label).width + 60);
+
+
+
+
 
 
 
@@ -4486,7 +8971,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         const by = 512 - 20 - (acts.length - i) * 78;
+
+
+
+
 
 
 
@@ -4494,7 +8987,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         ctx.beginPath();
+
+
+
+
 
 
 
@@ -4502,7 +9003,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         ctx.fill();
+
+
+
+
 
 
 
@@ -4510,7 +9019,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         ctx.font = 'bold 32px sans-serif';
+
+
+
+
 
 
 
@@ -4518,7 +9035,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         this.btnRects.push({ x: bx, y: by, w: Math.min(bw, 920), h: 64, command: a.command });
+
+
+
+
 
 
 
@@ -4526,7 +9051,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       if (!acts.length) {
+
+
+
+
 
 
 
@@ -4534,7 +9067,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         ctx.font = '28px sans-serif';
+
+
+
+
 
 
 
@@ -4542,7 +9083,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       }
+
+
+
+
 
 
 
@@ -4550,13 +9099,33 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.dialogTex.needsUpdate = true;
+
+
+
+
 
 
 
     ctx.restore();
 
+
+
   }
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -4570,7 +9139,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   private updateHover() {
+
+
+
+
 
 
 
@@ -4578,7 +9155,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     this.hoverByHand = [-1, -1];
+
+
+
+
 
 
 
@@ -4586,7 +9171,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     const showLaser = !!(panel && panel.visible && this.btnRects.length > 0);
+
+
+
+
 
 
 
@@ -4594,7 +9187,15 @@ export class VRSystem {
 
 
 
+
+
+
+
     if (!panel || !panel.visible) return;
+
+
+
+
 
 
 
@@ -4602,7 +9203,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const c = this.controllers[hand];
+
+
+
+
 
 
 
@@ -4610,7 +9219,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const origin = c.getWorldPosition(new THREE.Vector3());
+
+
+
+
 
 
 
@@ -4618,7 +9235,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(panel.quaternion);
+
+
+
+
 
 
 
@@ -4626,7 +9251,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const denom = dir.dot(normal);
+
+
+
+
 
 
 
@@ -4634,7 +9267,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const t = toPanel.dot(normal) / denom;
+
+
+
+
 
 
 
@@ -4642,7 +9283,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const hit = origin.clone().add(dir.clone().multiplyScalar(t));
+
+
+
+
 
 
 
@@ -4650,7 +9299,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       // plane 1.3 x 0.65 → uv
+
+
+
+
 
 
 
@@ -4658,7 +9315,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       const v = (0.5 - local.y / 0.65) * 512;
+
+
+
+
 
 
 
@@ -4666,7 +9331,15 @@ export class VRSystem {
 
 
 
+
+
+
+
         if (u >= b.x && u <= b.x + b.w && v >= b.y && v <= b.y + b.h) {
+
+
+
+
 
 
 
@@ -4674,7 +9347,15 @@ export class VRSystem {
 
 
 
+
+
+
+
           if (this.hoverBtn < 0) this.hoverBtn = i;
+
+
+
+
 
 
 
@@ -4682,7 +9363,15 @@ export class VRSystem {
 
 
 
+
+
+
+
       });
+
+
+
+
 
 
 
@@ -4690,7 +9379,15 @@ export class VRSystem {
 
 
 
+
+
+
+
   }
+
+
+
+
 
 
 
