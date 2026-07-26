@@ -760,7 +760,7 @@ export class Game {
 
       groundY: (x, z) => groundHeight(x, z),
 
-      setViewYaw: (yaw) => { this.camYaw = yaw; this.playerYaw = yaw; },
+      setViewYaw: (yaw) => { this.camYaw = yaw; },
 
       onVrSwing: () => {
 
