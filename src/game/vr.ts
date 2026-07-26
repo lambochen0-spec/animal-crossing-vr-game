@@ -998,7 +998,7 @@ export class VRSystem {
 
 
 
-      r.setPixelRatio(Math.min(0.5, this.savedPixelRatio));
+      r.setPixelRatio(Math.min(0.25, this.savedPixelRatio));
 
 
 
@@ -1586,7 +1586,7 @@ export class VRSystem {
 
 
 
-    let targetPR = 0.5;
+    let targetPR = 0.25;
 
 
 
