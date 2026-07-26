@@ -1025,7 +1025,7 @@ export class VRSystem {
 
 
       (r.xr as unknown as { setFoveation?: (f: number) => void; setFramebufferScalingFactor?: (s: number) => void }).setFoveation?.(2);
-      (r.xr as unknown as { setFoveation?: (f: number) => void; setFramebufferScalingFactor?: (s: number) => void }).setFramebufferScalingFactor?.(0.7);
+      (r.xr as unknown as { setFoveation?: (f: number) => void; setFramebufferScalingFactor?: (s: number) => void }).setFramebufferScalingFactor?.(0.2);
 
 
 
