@@ -92,6 +92,82 @@ const SKY_TMP = new THREE.Color();
 
 
 
+// 四类图鉴里程碑配置（3 档：约 1/3 金币 → 约 2/3 积分 → 全收集积分，参照博物馆 3/6/9 档精神）
+// key 为 firstFlags 里的档位后缀：m_<kind>_1 / m_<kind>_2 沿用旧 key（旧存档兼容、不重复发奖），
+// 新增的中间档用新 key m_<kind>_3，与旧存档 key 不冲突。
+export interface DexMilestoneTier {
+  need: number;   // 收集多少种触发
+  key: number;    // firstFlags 后缀：m_<kind>_<key>
+  bells?: number; // 金币奖励
+  miles?: number; // 积分奖励
+  icon: string;   // 提示弹窗图标
+  label: string;  // 提示弹窗标题后缀，如 '开张' / '全收集'
+}
+export interface DexMilestoneDef {
+  name: string; // 提示弹窗里的类别名，如 '虫类'
+  tiers: DexMilestoneTier[];
+}
+export const DEX_MILESTONES: Record<string, DexMilestoneDef> = {
+  bug: {
+    name: '虫类',
+    tiers: [
+      { need: 2, key: 1, bells: 300,  icon: '🎉', label: '开张' },
+      { need: 3, key: 3, miles: 400,  icon: '🎯', label: '快集齐了' },
+      { need: 4, key: 2, miles: 800,  icon: '🏆', label: '全收集' },
+    ],
+  },
+  fish: {
+    name: '鱼类',
+    tiers: [
+      { need: 2, key: 1, bells: 400,  icon: '🎉', label: '开张' },
+      { need: 3, key: 3, miles: 500,  icon: '🎯', label: '快集齐了' },
+      { need: 4, key: 2, miles: 800,  icon: '🏆', label: '全收集' },
+    ],
+  },
+  mineral: {
+    name: '矿物',
+    tiers: [
+      { need: 2, key: 1, bells: 500,  icon: '🎉', label: '开张' },
+      { need: 3, key: 3, miles: 600,  icon: '🎯', label: '快集齐了' },
+      { need: 4, key: 2, miles: 1000, icon: '🏆', label: '全收集' },
+    ],
+  },
+  flower: {
+    name: '花卉',
+    tiers: [
+      { need: 1, key: 1, bells: 300,  icon: '🎉', label: '开张' },
+      { need: 2, key: 3, miles: 400,  icon: '🎯', label: '快集齐了' },
+      { need: 3, key: 2, miles: 600,  icon: '🏆', label: '全收集' },
+    ],
+  },
+};
+
+// 累计成就：生涯统计达标自动解锁，发积分（reward 与每日任务积分体系一致，用 addMiles）
+// cond 对应 stats 的键名，或 'dex'（图鉴全收集：虫+鱼+矿物+花 共 15 种）
+export interface AchievementDef {
+  id: string;
+  icon: string;
+  name: string;
+  desc: string;
+  cond: string;
+  need: number;
+  reward: number;
+}
+export const ACHIEVEMENTS: AchievementDef[] = [
+  { id: 'fish_1',     icon: '🐟', name: '初次垂钓',       desc: '钓到 1 条鱼——鱼儿上钩，梦想启航！',     cond: 'fishCaught',   need: 1,   reward: 500 },
+  { id: 'fish_50',    icon: '🎣', name: '渔夫的手艺',     desc: '钓到 50 条鱼——海的味道，岛民都知道！', cond: 'fishCaught',   need: 50,  reward: 1500 },
+  { id: 'bug_1',      icon: '🦋', name: '捕虫新手',       desc: '捉到 1 只虫——别怕，它比你更紧张！',     cond: 'bugsCaught',   need: 1,   reward: 500 },
+  { id: 'bug_30',     icon: '🪲', name: '昆虫博士',       desc: '捉到 30 只虫——虫虫大军听你号令！',     cond: 'bugsCaught',   need: 30,  reward: 1500 },
+  { id: 'ore_100',    icon: '⛏️', name: '矿工传说',       desc: '挖矿 100 次——地底深处的宝藏猎手！',   cond: 'oreMined',     need: 100, reward: 2000 },
+  { id: 'sell_50',    icon: '💰', name: '生意兴隆',       desc: '卖出 50 件物品——喵喵的摇钱树！',       cond: 'itemsSold',    need: 50,  reward: 1500 },
+  { id: 'plant_30',   icon: '🌱', name: '田园守望者',     desc: '种植 30 次——小岛从此绿意盎然！',       cond: 'plantsPlanted', need: 30, reward: 1200 },
+  { id: 'donate_5',   icon: '🦉', name: '博物馆之友',     desc: '捐赠 5 件展品——傅达为你疯狂点赞！',    cond: 'donatedTotal', need: 5,   reward: 1500 },
+  { id: 'days_10',    icon: '📅', name: '岛居生活',       desc: '在小岛住满 10 天——这里就是你的家！',   cond: 'daysPlayed',   need: 10,  reward: 1000 },
+  { id: 'dex_full',   icon: '🏆', name: '全图鉴收集',     desc: '图鉴全收集——小岛万事通就是你！',       cond: 'dex',          need: 15,  reward: 2000 },
+];
+
+
+
 export class Game {
 
   private renderer: THREE.WebGLRenderer;
@@ -186,6 +262,9 @@ export class Game {
 
   private miles = 0;
 
+  // 生活技能经验（fish/bug/mine/garden），等级由 gainSkill 用 LEVEL_STEPS 曲线算出
+  private skills: Record<string, { xp: number; lv: number }> = {};
+
   // 自定义岛名/玩家名（开局起名，存在独立 localStorage + 存档里）
 
   islandName = '像素小岛';
@@ -195,6 +274,15 @@ export class Game {
   // 每日任务（Nook 日常：每天随机 3 个小目标，完成发积分）
 
   private dailyTasks: { day: number; tasks: { kind: string; icon: string; text: string; need: number; reward: number; progress: number; done: boolean }[] } | null = null;
+
+  // 周常任务（每周 7 天一个周期刷新的大目标，奖励更高）
+  private weeklyTasks: { week: number; tasks: { kind: string; icon: string; text: string; need: number; reward: number; progress: number; done: boolean }[] } | null = null;
+
+  // 生涯累计统计（成就系统数据源）：fishCaught/bugsCaught/oreMined/itemsSold/treesShaken/plantsPlanted/donatedTotal/daysPlayed
+  private stats: Record<string, number> = {};
+
+  // 已解锁成就 id 集合（永久）
+  private unlockedAch: Set<string> = new Set();
 
   // 宝可梦好感度：聊天每天 +1，收到礼物 +3；满 2 心送照片，满 4 心起昵称
 
@@ -243,6 +331,32 @@ export class Game {
   }
 
   private nextLevelXp(lv: number) { return lv < Game.LEVEL_STEPS.length ? Game.LEVEL_STEPS[lv] : -1; } // -1 = 已满级
+
+  // ---------- 生活技能：钓鱼/捉虫/挖矿/园艺（每次成功动作加经验，升级获得被动加成） ----------
+  // 等级复用 LEVEL_STEPS 曲线：Lv0 起（0/20/50/90/140/200），封顶 Lv5，xp ≥ 200 后不再涨级
+  private static SKILL_INFO: Record<string, { name: string; icon: string; bonus: string }> = {
+    fish: { name: '钓鱼', icon: '🎣', bonus: '收杆效率提升（偶尔一下能多拉 1 点）' },
+    bug: { name: '捉虫', icon: '🦋', bonus: '捉虫范围变大，更容易靠近虫虫' },
+    mine: { name: '挖矿', icon: '⛏️', bonus: '有机会双倍掉落矿石' },
+    garden: { name: '园艺', icon: '🌱', bonus: '果实再生更快，果树结得更勤' },
+  };
+  // 等级收益（每级给一点，Lv5 明显）：收杆效率/捉虫距离/双倍概率各 +5%/6%/5%，果实再生每级快 10
+  private skillLv(skill: string) { return this.skills[skill]?.lv ?? 0; }
+  private gardenRegrowT() { return 150 - 10 * this.skillLv('garden'); } // 150 → Lv5 时 100
+  private gainSkill(skill: string, xp: number) {
+    const s = this.skills[skill] ?? (this.skills[skill] = { xp: 0, lv: 0 });
+    const oldLv = s.lv;
+    s.xp = Math.min(s.xp + xp, Game.LEVEL_STEPS[Game.LEVEL_STEPS.length - 1]); // xp 超过 200 封顶
+    s.lv = this.jobLevel(s.xp);
+    if (s.lv > oldLv) {
+      const info = Game.SKILL_INFO[skill];
+      sfx.fanfare();
+      this.toast(`${info.name} Lv${s.lv}！${info.bonus}`, info.icon, '生活技能升级啦，去手机「技能」页看看');
+    }
+    this.syncHud();
+    this.save();
+  }
+
 
   // 接待员售价倍率：×1.0 起，每级 +0.2，Lv5 封顶 ×2.0
 
@@ -1509,11 +1623,19 @@ export class Game {
 
         dailyTasks: this.dailyTasks,
 
+        weeklyTasks: this.weeklyTasks,
+
+        stats: this.stats,
+
+        unlockedAch: [...this.unlockedAch],
+
         friendship: this.friendship, nicknames: this.nicknames,
 
         iceShop: this.iceShop, shopMats: this.shopMats,
 
         staff: this.staff,
+
+        skills: this.skills,
 
         islandName: this.islandName, playerName: this.playerName,
 
@@ -1583,6 +1705,14 @@ export class Game {
 
       this.dailyTasks = d.dailyTasks ?? null;
 
+      this.weeklyTasks = d.weeklyTasks ?? null;
+
+      this.stats = d.stats ?? {};
+
+      this.stats['daysPlayed'] = Math.max(this.stats['daysPlayed'] ?? 1, this.gameDay); // 旧存档兜底：游玩天数不小于当前游戏日
+
+      this.unlockedAch = new Set<string>(d.unlockedAch ?? []);
+
       this.friendship = d.friendship ?? {};
 
       this.nicknames = d.nicknames ?? {};
@@ -1592,6 +1722,14 @@ export class Game {
       this.shopMats = d.shopMats ?? this.shopMats;
 
       this.staff = d.staff ?? {};
+
+      // 生活技能（旧存档没有该字段 → 从零开始；等级一律按 xp 重新计算，避免脏数据）
+      this.skills = {};
+      for (const k of ['fish', 'bug', 'mine', 'garden']) {
+        const v = (d.skills ?? {})[k];
+        if (v && typeof v.xp === 'number') this.skills[k] = { xp: v.xp, lv: this.jobLevel(v.xp) };
+      }
+      store.patch({ skills: { ...this.skills } });
 
       // 存档里的岛名/玩家名（文件存档跨设备转移时跟着走）
 
@@ -1612,6 +1750,10 @@ export class Game {
       // 篝火堆只在晚会当晚存在，跨天即撤（读档不再重建）
 
       if (d.homeExpanded) { this.world.upgradeHome(); this.world.expandHome(); }
+
+      // 读档后立即检查一次成就（旧存档按当前 gameDay/图鉴状态补发达标成就）
+
+      this.checkAchievements();
 
     } catch { /* ignore */ }
 
@@ -1893,6 +2035,18 @@ export class Game {
 
   ];
 
+  // 周常任务池：每周大目标，need/reward 约为每日任务的 3-5 倍（每周随机挑 3 个）
+  private static WEEKLY_POOL = [
+    { kind: 'fish', icon: '🎣', text: '钓到 15 条鱼', need: 15, reward: 2000 },
+    { kind: 'bug', icon: '🦋', text: '捉到 10 只虫', need: 10, reward: 2000 },
+    { kind: 'shake', icon: '🌳', text: '摇树 20 次', need: 20, reward: 1500 },
+    { kind: 'sell', icon: '💰', text: '卖出物品 10 次', need: 10, reward: 1800 },
+    { kind: 'mine', icon: '⛏️', text: '挖矿 12 次', need: 12, reward: 1800 },
+    { kind: 'donate', icon: '🦉', text: '捐赠 3 件展品', need: 3, reward: 2500 },
+    { kind: 'plant', icon: '🌱', text: '种植 8 次', need: 8, reward: 1500 },
+    { kind: 'talk', icon: '💬', text: '和宝可梦聊天 10 次', need: 10, reward: 1500 },
+  ];
+
 
 
   // 每天以游戏日为种子随机挑 3 个任务（当天不变，全岛同步；按进度过滤掉还做不了的任务）
@@ -1937,7 +2091,28 @@ export class Game {
 
   }
 
-
+  // 每周随机挑 3 个周常任务（week = gameDay / 7 取整，同周不变；复用每日任务的 seeded shuffle）
+  private ensureWeeklyTasks() {
+    const week = Math.floor(this.gameDay / 7);
+    if (this.weeklyTasks && this.weeklyTasks.week === week) return;
+    const avail = Game.WEEKLY_POOL.filter(t => {
+      if (t.kind === 'mine') return this.world.bridgeFixed;   // 修好桥才能进矿洞
+      if (t.kind === 'donate') return this.questIdx >= 5;     // 博物馆任务线解锁捐赠后
+      if (t.kind === 'fish' || t.kind === 'bug') return this.questIdx >= 2; // 拿到鱼竿/虫网后
+      return true;
+    });
+    const pool = avail.map((_, i) => i);
+    let s = week * 7919 + 131; // 周种子：与每日任务（gameDay 种子）区分开
+    for (let i = pool.length - 1; i > 0; i--) {
+      s = (s * 233 + 137) % 100003;
+      const j = s % (i + 1);
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    this.weeklyTasks = {
+      week,
+      tasks: pool.slice(0, 3).map(i => ({ ...avail[i], progress: 0, done: false })),
+    };
+  }
 
   // 行为埋点：钓鱼/捉虫/摇树/卖货/挖矿/捐赠/聊天/种植
 
@@ -1977,8 +2152,54 @@ export class Game {
 
     }
 
+    // 周常：同一埋点双驱动（周常与每日各自独立计进度）
+    this.ensureWeeklyTasks();
+    for (const t of this.weeklyTasks!.tasks) {
+      if (t.kind !== kind || t.done) continue;
+      t.progress = Math.min(t.need, t.progress + n);
+      changed = true;
+      if (t.progress >= t.need) {
+        t.done = true;
+        this.addMiles(t.reward, false);
+        sfx.fanfare();
+        this.toast(`周常任务完成：${t.text}`, t.icon, `+${t.reward} 积分`);
+        if (this.weeklyTasks!.tasks.every(x => x.done)) {
+          this.addMiles(1000, false);
+          this.toast('本周任务全部完成！', '🎉', '额外 +1000 积分，下周再来吧！');
+        }
+      }
+    }
+
     if (changed) { this.syncHud(); this.save(); }
 
+  }
+
+  // 生涯统计累计 + 成就检查（达标自动解锁发积分）
+  private addStat(key: string, n: number) {
+    this.stats[key] = (this.stats[key] ?? 0) + n;
+    this.checkAchievements();
+  }
+
+  // 图鉴收集总数（虫+鱼走 dex 登记，矿物/花走 first_ 首次获得标记）
+  private dexCount() {
+    const extra = ['ore_copper', 'ore_iron', 'ore_gold', 'diamond', 'flower_red', 'flower_yellow', 'flower_white']
+      .filter(id => !!this.firstFlags['first_' + id]).length;
+    return this.dex.size + extra;
+  }
+
+  private checkAchievements() {
+    let changed = false;
+    for (const a of ACHIEVEMENTS) {
+      if (this.unlockedAch.has(a.id)) continue;
+      const val = a.cond === 'dex' ? this.dexCount() : (this.stats[a.cond] ?? 0);
+      if (val < a.need) continue;
+      this.unlockedAch.add(a.id);
+      this.addMiles(a.reward, false);
+      sfx.fanfare();
+      this.toast(`成就解锁：${a.name}`, a.icon, `${a.desc} 奖励 +${a.reward} 积分！`);
+      changed = true;
+    }
+    if (changed) { this.syncHud(); this.save(); }
   }
 
 
@@ -2911,7 +3132,7 @@ export class Game {
 
         this.updateBasketMesh(v);
 
-        if (t.fruits.length === 0) t.regrowT = 150;
+        if (t.fruits.length === 0) t.regrowT = this.gardenRegrowT(); // 园艺被动：果实再生更快（150 → 每级 -10）
 
         const vol = 0.3 * this.distVol(pos.x, pos.z);
 
@@ -3273,11 +3494,11 @@ export class Game {
 
     // 同步驱动每日任务
 
-    if (id === 'plant') this.trackDaily('plant', n);
+    if (id === 'plant') { this.trackDaily('plant', n); this.addStat('plantsPlanted', n); }
 
     else if (id === 'friend') this.trackDaily('talk', n);
 
-    else if (id === 'museum') this.trackDaily('donate', n);
+    else if (id === 'museum') { this.trackDaily('donate', n); this.addStat('donatedTotal', n); }
 
     const q = this.currentQuest();
 
@@ -3301,9 +3522,22 @@ export class Game {
 
     this.ensureDailyTasks();
 
+    this.ensureWeeklyTasks();
+
     store.patch({
 
       daily: this.dailyTasks!.tasks.map(t => ({ icon: t.icon, text: t.text, progress: t.progress, need: t.need, done: t.done })),
+
+      weekly: this.weeklyTasks?.tasks.map(t => ({ icon: t.icon, text: t.text, progress: t.progress, need: t.need, done: t.done, reward: t.reward })) ?? [],
+
+      stats: { ...this.stats },
+
+      unlockedAch: [...this.unlockedAch],
+
+      firstFlags: [
+        ...Object.keys(this.firstFlags).filter(k => k.startsWith('first_')).map(k => k.slice(6)),
+        ...Object.keys(this.firstFlags).filter(k => k.startsWith('m_')), // 图鉴里程碑 key：m_<kind>_<n>（供 UI 显示领取状态）
+      ],
 
       bells: this.bells,
 
@@ -3326,6 +3560,8 @@ export class Game {
       } : null,
 
       homeUpgraded: this.world.homeUpgraded,
+
+      skills: { ...this.skills },
 
       ...extra,
 
@@ -3391,9 +3627,9 @@ export class Game {
 
     // 每日任务：钓鱼 / 捉虫
 
-    if (ITEMS[id]?.category === 'fish') this.trackDaily('fish', n);
+    if (ITEMS[id]?.category === 'fish') { this.trackDaily('fish', n); this.addStat('fishCaught', n); }
 
-    else if (ITEMS[id]?.category === 'bug') this.trackDaily('bug', n);
+    else if (ITEMS[id]?.category === 'bug') { this.trackDaily('bug', n); this.addStat('bugsCaught', n); }
 
     this.inventory[id] = (this.inventory[id] || 0) + n;
 
@@ -3426,6 +3662,16 @@ export class Game {
       else if (id === 'fossil') this.addMiles(300, false);
 
     }
+
+    // 四类图鉴里程碑（虫/鱼看 dex 登记，矿物/花看 first_ 首次获得标记）
+
+    this.checkDexMilestone('bug', ['butterfly', 'tigerfly', 'dragonfly', 'firefly']);
+
+    this.checkDexMilestone('fish', ['crucian', 'carp', 'bass', 'koi']);
+
+    this.checkDexMilestone('mineral', ['ore_copper', 'ore_iron', 'ore_gold', 'diamond']);
+
+    this.checkDexMilestone('flower', ['flower_red', 'flower_yellow', 'flower_white']);
 
     this.syncHud();
 
@@ -3469,6 +3715,32 @@ export class Game {
 
     if (sync) { this.syncHud(); this.save(); }
 
+  }
+
+
+
+  // 四类图鉴里程碑：约 1/3（金币）→ 约 2/3（积分）→ 全收集（积分）
+  // firstFlags['m_<kind>_1'/'m_<kind>_2'] 沿用旧 key（旧存档不重复发奖），新增中间档用新 key 'm_<kind>_3'
+  private checkDexMilestone(kind: string, ids: string[]) {
+    const info = DEX_MILESTONES[kind];
+    if (!info) return;
+    const total = ids.length;
+    const count = ids.filter(id => (kind === 'bug' || kind === 'fish') ? this.dex.has(id) : !!this.firstFlags['first_' + id]).length;
+    for (const tier of info.tiers) {
+      if (count < tier.need) continue;
+      if (this.firstFlags['m_' + kind + '_' + tier.key]) continue;
+      this.firstFlags['m_' + kind + '_' + tier.key] = true;
+      const rewardTxt = tier.bells !== undefined ? `${tier.bells} 金币` : `+${tier.miles} 积分`;
+      if (tier.bells !== undefined) this.addBells(tier.bells);
+      else if (tier.miles !== undefined) { this.addMiles(tier.miles, false); this.syncHud(); }
+      this.toast(
+        `${info.name}图鉴${tier.label}！`,
+        tier.icon,
+        tier.key === 2 ? `集齐全部 ${total} 种，奖励 ${rewardTxt}！` : `已收集 ${count}/${total} 种，奖励 ${rewardTxt}，继续收集吧！`
+      );
+      sfx.fanfare();
+      this.save();
+    }
   }
 
 
@@ -3869,7 +4141,7 @@ export class Game {
 
         const d = Math.hypot(p.x - b.group.position.x, p.z - b.group.position.z);
 
-        if (d < 2.8) candidates.push({ kind: 'bug', prompt: 'E 捕捉！', dist: d, target: b });
+        if (d < 2.8 * (1 + 0.06 * this.skillLv('bug'))) candidates.push({ kind: 'bug', prompt: 'E 捕捉！', dist: d, target: b }); // 捉虫被动：每级 +6% 捕捉距离
 
       }
 
@@ -4471,6 +4743,8 @@ export class Game {
 
         this.addItem(b.itemId);
 
+        this.gainSkill('bug', 10); // 捉虫成功 +10 经验
+
         this.world.removeBug(b);
 
         this.bugRespawnT = 18;
@@ -4685,9 +4959,15 @@ export class Game {
 
           this.trackDaily('shake', 1);
 
+          this.addStat('treesShaken', 1);
+
           const got = this.world.shakeTree(t);
 
-          if (got > 0) sfx.plop();
+          if (got > 0) {
+            sfx.plop();
+            // 园艺被动：果实再生更快（world.shakeTree 里固定 150，这里按等级缩短）
+            t.regrowT = this.gardenRegrowT();
+          }
 
           break;
 
@@ -4714,6 +4994,8 @@ export class Game {
         sc.n++;
 
         this.trackDaily('shake', 1);
+
+        this.addStat('treesShaken', 1);
 
         const n = this.world.shakeTree(t);
 
@@ -4763,6 +5045,8 @@ export class Game {
 
           this.trackQuest('plant', 1);
 
+          this.gainSkill('garden', 12); // 移栽果树苗 +12 经验
+
           this.toast(`种下了${ITEMS[this.selectedItem]?.name ?? '果树苗'}！`, '🌱', '过一阵子就会长回原来的果树');
 
         } else if (this.selectedItem === 'sapling') {
@@ -4774,6 +5058,8 @@ export class Game {
           sfx.plant();
 
           this.trackQuest('plant', 1);
+
+          this.gainSkill('garden', 12); // 种树苗 +12 经验
 
           this.toast('种下了树苗！', '🌱', '过一阵子就会长成大树');
 
@@ -4788,6 +5074,8 @@ export class Game {
           sfx.plant();
 
           this.trackQuest('plant', 1);
+
+          this.gainSkill('garden', 12); // 播花种 +12 经验
 
           this.toast('播下了花种！', '🌷', '开得真好看');
 
@@ -4816,6 +5104,8 @@ export class Game {
           sfx.plant();
 
           this.trackQuest('plant', 1);
+
+          this.gainSkill('garden', 12); // 种种子/花苗 +12 经验
 
           this.toast(`种下了${ITEMS[this.selectedItem]?.name ?? '种子'}！`, '🌱', '慢慢就会长大');
 
@@ -5241,7 +5531,14 @@ export class Game {
 
     this.addItem(oreId);
 
+    this.gainSkill('mine', 4); // 每锤矿石 +4 经验
+
+    // 挖矿被动：每级 +5% 双倍掉落概率（矿石再掉一颗，不额外提示）
+    if (Math.random() < 0.05 * this.skillLv('mine')) this.addItem(oreId);
+
     this.trackDaily('mine', 1);
+
+    this.addStat('oreMined', 1);
 
     // 三层稀有掉落：钻石（开店稀有材料）
 
@@ -6277,7 +6574,8 @@ export class Game {
 
   private reelPress() {
 
-    this.reelGot++;
+    // 钓鱼被动：每级 +5% 收杆效率（蓄力速度系数 1 → 1 + lv*0.05，保留整数逻辑：收杆偶尔一下多拉 1 点）
+    this.reelGot += 1 + (Math.random() < 0.05 * this.skillLv('fish') ? 1 : 0);
 
     sfx.splash();
 
@@ -6302,6 +6600,8 @@ export class Game {
         const def = ITEMS[fish.itemId];
 
         this.addItem(fish.itemId);
+
+        this.gainSkill('fish', 10); // 钓鱼成功 +10 经验
 
         this.toast(`钓到了${def?.name}！`, def?.icon ?? '🐟', def?.desc ?? '');
 
@@ -7635,6 +7935,8 @@ export class Game {
 
             this.trackDaily('sell', 1);
 
+            this.addStat('itemsSold', n);
+
             this.rewardSellMiles();
 
             sfx.sell();
@@ -7651,11 +7953,13 @@ export class Game {
 
           let gain = 0;
 
+          let soldCount = 0;
+
           for (const [id, n] of Object.entries({ ...this.inventory })) {
 
             const price = this.sellPrice(id); // 每日高价品类 1.5 倍
 
-            if (price > 0) { gain += price * n; this.removeItem(id, n); }
+            if (price > 0) { gain += price * n; soldCount += n; this.removeItem(id, n); }
 
           }
 
@@ -7666,6 +7970,8 @@ export class Game {
             this.trackQuest('earn', gain);
 
             this.trackDaily('sell', 1);
+
+            this.addStat('itemsSold', soldCount);
 
             this.rewardSellMiles();
 
@@ -7782,6 +8088,10 @@ export class Game {
   private midnightReset() {
 
     this.mineState = null;
+
+    this.stats['daysPlayed'] = this.gameDay; // 游玩天数 = 游戏日（跨天 +1）
+
+    this.checkAchievements();
 
     this.iceShop.open = false; // 跨天强制打烊（库存保留）
 

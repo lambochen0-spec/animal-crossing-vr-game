@@ -18,6 +18,9 @@ export interface HudState {
   shopGoods: { id: string; name: string; icon: string; price: number }[]; // 今日货架商品（喵喵面板同步可买）
   hotDeal: { cat: string; icon: string; label: string } | null; // 今日高价收购品类（1.5 倍）
   daily: { icon: string; text: string; progress: number; need: number; done: boolean }[]; // 每日任务
+  weekly: { icon: string; text: string; progress: number; need: number; done: boolean; reward: number }[]; // 周常任务
+  stats: Record<string, number>;       // 生涯累计统计（成就系统数据源）
+  unlockedAch: string[];               // 已解锁成就 id 列表
   timeText: string;
   dateText: string;
   isNight: boolean;
@@ -39,6 +42,8 @@ export interface HudState {
   hasSave: boolean;               // 是否存在存档（决定「读取存档」按钮）
   karaoke: string | null;         // 篝火晚会歌词横幅（null=不显示）
   dex: string[];                  // 图鉴：抓到过的虫/鱼
+  skills: Record<string, { xp: number; lv: number }>; // 生活技能：fish/bug/mine/garden → 经验 + 等级（手机技能页显示）
+  firstFlags: string[];           // 已收集物品 id 列表（从 firstFlags 的 first_ 前缀 key 派生）
   vrSupported: boolean;           // 检测到 VR 设备（显示进入 VR 入口）
   vrActive: boolean;              // VR 会话进行中
 }
@@ -58,6 +63,9 @@ export const initialHud: HudState = {
   shopGoods: [],
   hotDeal: null,
   daily: [],
+  weekly: [],
+  stats: {},
+  unlockedAch: [],
   timeText: '09:00',
   dateText: '1月1日',
   isNight: false,
@@ -79,6 +87,8 @@ export const initialHud: HudState = {
   hasSave: false,
   karaoke: null,
   dex: [],
+  skills: {},
+  firstFlags: [],
   vrSupported: false,
   vrActive: false,
 };

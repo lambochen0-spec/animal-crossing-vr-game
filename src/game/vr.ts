@@ -40,6 +40,8 @@ import { store, commands } from './store';
 
 import { ITEMS } from './data';
 
+import { ACHIEVEMENTS } from './game';
+
 
 
 
@@ -1610,7 +1612,7 @@ export class VRSystem {
 
 
 
-  private phoneTab: 'map' | 'bag' | 'tool' | 'decor' = 'map';
+  private phoneTab: 'map' | 'bag' | 'tool' | 'decor' | 'dex' | 'skill' | 'award' = 'map';
 
 
 
@@ -1990,23 +1992,15 @@ export class VRSystem {
 
 
 
-      const session = await xr.requestSession('immersive-vr', {
-
-
-
-
-
-
-
-        optionalFeatures: ['local-floor', 'bounded-floor'],
-
-
-
-
-
-
-
-      });
+      // WebXR DOM Overlay：把 GameUI 根容器（id="xr-dom-overlay"）设为叠加层，
+      // 商店/帮助/任务/手机等全部 DOM 面板在头显内可见，Quest 手柄射线点按投递浏览器 pointer 事件（React onClick 原样生效）
+      const overlayRoot = document.getElementById('xr-dom-overlay');
+      const sessionInit: XRSessionInit = {
+        optionalFeatures: ['local-floor', 'bounded-floor', 'dom-overlay'],
+      };
+      // 找不到叠加根（非 Quest / 浏览器不支持 DOM Overlay）时回退普通沉浸会话——optionalFeatures 本身容错，这里再兜一层
+      if (overlayRoot) sessionInit.domOverlay = { root: overlayRoot };
+      const session = await xr.requestSession('immersive-vr', sessionInit);
 
 
 
@@ -4275,7 +4269,7 @@ export class VRSystem {
 
 
 
-  private phonePages = ['map', 'bag', 'tool', 'decor'] as const; // 右手手机四页
+  private phonePages = ['map', 'bag', 'tool', 'decor', 'dex', 'skill', 'award'] as const; // 右手手机七页
 
 
 
@@ -6559,7 +6553,7 @@ export class VRSystem {
 
 
 
-    const tabs: [string, 'map' | 'bag' | 'tool' | 'decor'][] = [['🗺️ 地图', 'map'], ['🎒 背包', 'bag'], ['🔧 工具', 'tool'], ['🏠 装修', 'decor']];
+    const tabs: [string, 'map' | 'bag' | 'tool' | 'decor' | 'dex' | 'skill' | 'award'][] = [['🗺️ 地图', 'map'], ['🎒 背包', 'bag'], ['🔧 工具', 'tool'], ['🏠 装修', 'decor'], ['📖 图鉴', 'dex'], ['🎣 技能', 'skill'], ['🏆 成就', 'award']];
 
 
 
@@ -6575,7 +6569,7 @@ export class VRSystem {
 
 
 
-      const bx = 12 + i * 124, by = 14, bw = 116, bh = 54;
+      const bx = 5 + i * 72, by = 14, bw = 70, bh = 54; // 七页：收窄标签以全部容纳
 
 
 
@@ -6647,7 +6641,7 @@ export class VRSystem {
 
 
 
-      ctx.font = 'bold 26px sans-serif';
+      ctx.font = 'bold 16px sans-serif';
 
 
 
@@ -6655,7 +6649,7 @@ export class VRSystem {
 
 
 
-      ctx.fillText(label, bx + 18, by + 37);
+      ctx.fillText(label, bx + 6, by + 35);
 
 
 
@@ -6689,6 +6683,9 @@ export class VRSystem {
 
     else if (this.phoneTab === 'bag') this.drawPhoneBag(ctx, s);
     else if (this.phoneTab === 'decor') this.drawPhoneDecor(ctx);
+    else if (this.phoneTab === 'dex') this.drawPhoneDex(ctx, s);
+    else if (this.phoneTab === 'skill') this.drawPhoneSkill(ctx, s);
+    else if (this.phoneTab === 'award') this.drawPhoneAward(ctx, s);
 
 
 
@@ -7442,6 +7439,185 @@ export class VRSystem {
 
 
 
+  // 图鉴页：四类收集（虫/鱼/矿物/花），每类带进度条 + 里程碑状态
+  private drawPhoneDex(ctx: CanvasRenderingContext2D, s: typeof store.state) {
+    const dexSet = new Set(s.dex);
+    const firstSet = new Set(s.firstFlags);
+    const groups: { kind: string; icon: string; name: string; ids: string[] }[] = [
+      { kind: 'bug', icon: '🦋', name: '昆虫', ids: ['butterfly', 'tigerfly', 'dragonfly', 'firefly'] },
+      { kind: 'fish', icon: '🐟', name: '鱼类', ids: ['crucian', 'carp', 'bass', 'koi'] },
+      { kind: 'mineral', icon: '⛏️', name: '矿物', ids: ['ore_copper', 'ore_iron', 'ore_gold', 'diamond'] },
+      { kind: 'flower', icon: '🌸', name: '花卉', ids: ['flower_red', 'flower_yellow', 'flower_white'] },
+    ];
+    // 里程碑档位（与 game.ts DEX_MILESTONES 保持一致：need 触发数量 / key firstFlags 后缀 / bells·miles 奖励）
+    const M: Record<string, { tiers: { need: number; key: number; bells?: number; miles?: number }[] }> = {
+      bug:     { tiers: [{ need: 2, key: 1, bells: 300 }, { need: 3, key: 3, miles: 400 }, { need: 4, key: 2, miles: 800 }] },
+      fish:    { tiers: [{ need: 2, key: 1, bells: 400 }, { need: 3, key: 3, miles: 500 }, { need: 4, key: 2, miles: 800 }] },
+      mineral: { tiers: [{ need: 2, key: 1, bells: 500 }, { need: 3, key: 3, miles: 600 }, { need: 4, key: 2, miles: 1000 }] },
+      flower:  { tiers: [{ need: 1, key: 1, bells: 300 }, { need: 2, key: 3, miles: 400 }, { need: 3, key: 2, miles: 600 }] },
+    };
+    const got = (kind: string, id: string) => (kind === 'bug' || kind === 'fish') ? dexSet.has(id) : firstSet.has(id);
+    const total = groups.reduce((n, g) => n + g.ids.length, 0);
+    const collected = groups.reduce((n, g) => n + g.ids.filter(id => got(g.kind, id)).length, 0);
+
+    ctx.fillStyle = '#8fa8c8';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText(`📖 图鉴　已收集 ${collected} / ${total}`, 18, 106);
+
+    let y = 142;
+    for (const g of groups) {
+      const cnt = g.ids.filter(id => got(g.kind, id)).length;
+      const t = g.ids.length;
+      // 类别标题
+      ctx.fillStyle = '#ffd76a';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText(`${g.icon} ${g.name}（${cnt}/${t}）`, 18, y);
+      // 进度条
+      ctx.fillStyle = '#233250';
+      ctx.beginPath();
+      ctx.roundRect(18, y + 10, 476, 10, 5);
+      ctx.fill();
+      ctx.fillStyle = '#4ade80';
+      ctx.beginPath();
+      ctx.roundRect(18, y + 10, Math.max(12, 476 * (cnt / t)), 10, 5);
+      ctx.fill();
+      // 里程碑状态
+      const ms = M[g.kind];
+      const nextTier = ms?.tiers.find(tier => !firstSet.has(`m_${g.kind}_${tier.key}`));
+      ctx.fillStyle = nextTier ? '#9fe8b8' : '#ffd76a';
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillText(
+        nextTier
+          ? `下一奖励：收集 ${nextTier.need}/${t} 种得 ${nextTier.bells ?? nextTier.miles} ${nextTier.bells !== undefined ? '金币' : '积分'}`
+          : '🏆 全收集完成！奖励已领取',
+        18, y + 32
+      );
+      // 卡片（4 个一排，收窄高度以容纳进度条 + 里程碑行）
+      g.ids.forEach((id, i) => {
+        const col = i % 4;
+        const bx = 18 + col * 120, by = y + 40, bw = 108, bh = 62;
+        const has = got(g.kind, id);
+        const def = ITEMS[id];
+        ctx.fillStyle = has ? '#2a3a52' : '#1a2334';
+        ctx.beginPath();
+        ctx.roundRect(bx, by, bw, bh, 12);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '30px sans-serif';
+        ctx.fillText(has ? (def?.icon ?? '❓') : '❓', bx + 8, by + 28);
+        ctx.fillStyle = has ? '#ffffff' : '#5c6b82';
+        ctx.font = 'bold 15px sans-serif';
+        ctx.fillText(has ? (def?.name ?? id) : '？？？', bx + 10, by + 50);
+        ctx.fillStyle = has ? '#7ee08a' : '#4a5870';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.fillText(has ? '✓' : '❓', bx + 88, by + 24);
+      });
+      y += 40 + 62 + 12;
+    }
+  }
+
+
+  // 技能页：四个生活技能（钓鱼/捉虫/挖矿/园艺），等级 + 经验条 + 被动说明（参照图鉴页布局）
+  private drawPhoneSkill(ctx: CanvasRenderingContext2D, s: typeof store.state) {
+    const steps = [20, 50, 90, 140, 200]; // 与 game.ts LEVEL_STEPS 一致
+    const skills: { key: string; icon: string; name: string; passive: (lv: number) => string }[] = [
+      { key: 'fish', icon: '🎣', name: '钓鱼', passive: lv => `收杆效率 +${lv * 5}%（偶尔一下多拉 1 点）` },
+      { key: 'bug', icon: '🦋', name: '捉虫', passive: lv => `捉虫距离 +${Math.round(lv * 6)}%` },
+      { key: 'mine', icon: '⛏️', name: '挖矿', passive: lv => `双倍掉落概率 +${lv * 5}%` },
+      { key: 'garden', icon: '🌱', name: '园艺', passive: lv => `果实再生加快 ${lv * 10} 秒` },
+    ];
+    ctx.fillStyle = '#8fa8c8';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText('🎣 技能　多干活就能升级', 18, 106);
+
+    let y = 148;
+    for (const sk of skills) {
+      const st = s.skills[sk.key] ?? { xp: 0, lv: 0 };
+      const next = st.lv < steps.length ? steps[st.lv] : -1;
+      const prev = st.lv === 0 ? 0 : steps[st.lv - 1];
+      const pct = next > 0 ? Math.min(100, Math.max(0, Math.round(((st.xp - prev) / (next - prev)) * 100))) : 100;
+      // 卡片背景
+      ctx.fillStyle = '#233250';
+      ctx.beginPath();
+      ctx.roundRect(18, y, 476, 118, 14);
+      ctx.fill();
+      // 图标
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '34px sans-serif';
+      ctx.fillText(sk.icon, 30, y + 46);
+      // 名称 + 等级
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText(`${sk.name}  Lv.${st.lv}`, 78, y + 38);
+      // 经验值（右对齐）
+      ctx.fillStyle = '#9fe8b8';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(next > 0 ? `${st.xp} / ${next}` : '⭐ 已满级', 478, y + 38);
+      ctx.textAlign = 'left';
+      // 经验条
+      ctx.fillStyle = '#152036';
+      ctx.beginPath();
+      ctx.roundRect(78, y + 48, 400, 12, 6);
+      ctx.fill();
+      ctx.fillStyle = next > 0 ? '#a78bfa' : '#fbbf24';
+      ctx.beginPath();
+      ctx.roundRect(78, y + 48, Math.max(12, Math.round(400 * pct / 100)), 12, 6);
+      ctx.fill();
+      // 被动说明
+      ctx.fillStyle = '#ffd76a';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText(st.lv > 0 ? `被动：${sk.passive(st.lv)}` : `升级解锁：${sk.passive(1)}`, 78, y + 92);
+      y += 118 + 16;
+    }
+  }
+
+  // 成就页：生涯累计成就列表（参照图鉴页布局，每行 icon + 名字 + 状态/进度；10 行以内正好一屏）
+  private drawPhoneAward(ctx: CanvasRenderingContext2D, s: typeof store.state) {
+    const achSet = new Set(s.unlockedAch);
+    // 图鉴收集总数（虫+鱼走 dex，矿物/花走 firstFlags），与 game.ts dexCount 一致
+    const dexSet = new Set(s.dex);
+    const firstSet = new Set(s.firstFlags);
+    const extraIds = ['ore_copper', 'ore_iron', 'ore_gold', 'diamond', 'flower_red', 'flower_yellow', 'flower_white'];
+    const dexTotal = dexSet.size + extraIds.filter(id => firstSet.has(id)).length;
+
+    ctx.fillStyle = '#8fa8c8';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText(`🏆 成就　已解锁 ${achSet.size} / ${ACHIEVEMENTS.length}`, 18, 106);
+
+    let y = 142;
+    for (const a of ACHIEVEMENTS) {
+      const unlocked = achSet.has(a.id);
+      const val = a.cond === 'dex' ? dexTotal : (s.stats[a.cond] ?? 0);
+      // 卡片背景
+      ctx.fillStyle = unlocked ? '#2a3a52' : '#1a2334';
+      ctx.beginPath();
+      ctx.roundRect(18, y, 476, 50, 12);
+      ctx.fill();
+      // 图标 / 锁
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '28px sans-serif';
+      ctx.fillText(unlocked ? a.icon : '🔒', 28, y + 34);
+      // 名字
+      ctx.fillStyle = unlocked ? '#ffffff' : '#8fa0b8';
+      ctx.font = 'bold 17px sans-serif';
+      ctx.fillText(`${unlocked ? '🏆 ' : ''}${a.name}`, 70, y + 30);
+      // 状态/进度（右对齐）
+      ctx.textAlign = 'right';
+      if (unlocked) {
+        ctx.fillStyle = '#ffd76a';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.fillText(`+${a.reward} 积分`, 478, y + 30);
+      } else {
+        ctx.fillStyle = '#7ee08a';
+        ctx.font = 'bold 15px sans-serif';
+        ctx.fillText(`${Math.min(val, a.need)}/${a.need}`, 478, y + 30);
+      }
+      ctx.textAlign = 'left';
+      y += 56;
+    }
+  }
+
   // 工具页：五个工具大按钮（独立一页，解决工具看不到的问题）
 
 
@@ -7882,7 +8058,7 @@ export class VRSystem {
 
 
 
-    if (kind === 'tab') { this.phoneTab = payload as 'map' | 'bag' | 'tool' | 'decor'; this.selMode = false; }
+    if (kind === 'tab') { this.phoneTab = payload as 'map' | 'bag' | 'tool' | 'decor' | 'dex' | 'skill' | 'award'; this.selMode = false; }
 
 
 

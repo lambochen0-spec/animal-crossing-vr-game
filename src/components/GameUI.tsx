@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { store, commands, initialHud } from '@/game/store';
 import type { HudState } from '@/game/store';
 import { ITEMS, TOOLS, SHOP_GOODS } from '@/game/data';
-import { touchInput, displayState } from '@/game/game';
+import { touchInput, displayState, DEX_MILESTONES, ACHIEVEMENTS } from '@/game/game';
 
 // 工具图标：emoji 或内联 SVG
 function iconFor(icon: string) {
@@ -66,7 +66,7 @@ export function GameUI() {
   const isMobile = useIsMobile();
 
   return (
-    <div className="pointer-events-none absolute inset-0 select-none font-sans ui-layer">
+    <div id="xr-dom-overlay" className="pointer-events-none absolute inset-0 select-none font-sans ui-layer">
       {/* 篝火晚会歌词横幅 */}
       {hud.karaoke && (
         <div className="absolute top-[18%] left-1/2 -translate-x-1/2 z-50 pointer-events-none">
@@ -114,8 +114,8 @@ export function GameUI() {
         </div>
       </div>
 
-      {/* 任务追踪（动森积分目标 + 每日任务）：手机上缩小一号，避免挡住画面 */}
-      {(hud.quest || hud.daily.length > 0) && (
+      {/* 任务追踪（动森积分目标 + 每日任务 + 周常任务）：手机上缩小一号，避免挡住画面 */}
+      {(hud.quest || hud.daily.length > 0 || hud.weekly.length > 0) && (
         <div className={isMobile
           ? 'absolute right-2 top-[6.5rem] w-44 rounded-xl bg-white/90 p-2 shadow-lg border-2 border-green-200'
           : 'absolute right-4 top-16 w-64 rounded-2xl bg-white/90 p-3 shadow-lg border-2 border-green-200'}>
@@ -143,6 +143,18 @@ export function GameUI() {
                   {t.icon} {t.text} <span className="float-right font-bold">{t.done ? '✓' : `${t.progress}/${t.need}`}</span>
                 </p>
               ))}
+            </div>
+          )}
+          {hud.weekly.length > 0 && (
+            <div className={`border-t border-green-100 ${isMobile ? 'mt-1.5 pt-1' : 'mt-2 pt-1.5'}`}>
+              <p className={`font-bold text-indigo-600 ${isMobile ? 'text-[10px]' : 'text-xs'}`}>📅 周常</p>
+              {hud.weekly.map((t, i) => (
+                <p key={i} className={`${isMobile ? 'text-[10px]' : 'text-xs'} ${t.done ? 'text-gray-400 line-through' : 'text-gray-700'}`}>
+                  {t.icon} {t.text}
+                  <span className={`float-right font-bold ${t.done ? '' : 'text-indigo-500'}`}>{t.done ? '✓' : `${t.progress}/${t.need} +${t.reward}`}</span>
+                </p>
+              ))}
+              <p className={`text-right text-[10px] text-gray-400 ${isMobile ? '' : 'mt-0.5'}`}>每周刷新 · 奖励积分</p>
             </div>
           )}
         </div>
@@ -734,9 +746,18 @@ function TouchLayer() {
 }
 
 // ---------------- 手机（参考动森 NookPhone：地图/背包/图鉴） ----------------
-import { BUG_DEFS, FISH_DEFS } from '@/game/data';
+import { BUG_DEFS, FISH_DEFS, FLOWER_IDS } from '@/game/data';
 
-type PhoneApp = 'map' | 'bag' | 'dex' | null;
+type PhoneApp = 'map' | 'bag' | 'dex' | 'skill' | 'award' | null;
+
+// 生活技能展示数据（与 game.ts SKILL_INFO / LEVEL_STEPS 保持一致）
+const SKILL_LIST: { key: string; icon: string; name: string; passive: (lv: number) => string }[] = [
+  { key: 'fish', icon: '🎣', name: '钓鱼', passive: lv => `收杆效率 +${lv * 5}%（偶尔一下多拉 1 点）` },
+  { key: 'bug', icon: '🦋', name: '捉虫', passive: lv => `捉虫距离 +${Math.round(lv * 6)}%` },
+  { key: 'mine', icon: '⛏️', name: '挖矿', passive: lv => `双倍掉落概率 +${lv * 5}%` },
+  { key: 'garden', icon: '🌱', name: '园艺', passive: lv => `果实再生加快 ${lv * 10} 秒（果树结果更快）` },
+];
+const SKILL_STEPS = [20, 50, 90, 140, 200]; // 与 game.ts LEVEL_STEPS 一致
 
 function PhonePanel({ hud }: { hud: HudState }) {
   const [app, setApp] = useState<PhoneApp>(null);
@@ -747,8 +768,18 @@ function PhonePanel({ hud }: { hud: HudState }) {
     { id: 'map' as const, icon: '🗺️', name: '地图', bg: 'bg-emerald-400' },
     { id: 'bag' as const, icon: '🎒', name: '背包', bg: 'bg-amber-400' },
     { id: 'dex' as const, icon: '📖', name: '图鉴', bg: 'bg-sky-400' },
+    { id: 'skill' as const, icon: '🎣', name: '技能', bg: 'bg-violet-400' },
+    { id: 'award' as const, icon: '🏆', name: '成就', bg: 'bg-rose-400' },
   ];
-  const dexEntries = [...BUG_DEFS.map(b => b.itemId), ...FISH_DEFS.map(f => f.itemId)];
+  const dexGroups: { kind: string; icon: string; name: string; ids: string[] }[] = [
+    { kind: 'bug', icon: '🦋', name: '昆虫', ids: BUG_DEFS.map(b => b.itemId) },
+    { kind: 'fish', icon: '🐟', name: '鱼类', ids: FISH_DEFS.map(f => f.itemId) },
+    { kind: 'mineral', icon: '⛏️', name: '矿物', ids: ['ore_copper', 'ore_iron', 'ore_gold', 'diamond'] },
+    { kind: 'flower', icon: '🌸', name: '花卉', ids: FLOWER_IDS },
+  ];
+  const got = (kind: string, id: string) => kind === 'bug' || kind === 'fish' ? dexSet.has(id) : hud.firstFlags.includes(id);
+  const dexTotal = dexGroups.reduce((n, g) => n + g.ids.length, 0);
+  const dexGot = dexGroups.reduce((n, g) => n + g.ids.filter(id => got(g.kind, id)).length, 0);
 
   return (
     <div className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center bg-black/50 p-4" onClick={close}>
@@ -826,18 +857,98 @@ function PhonePanel({ hud }: { hud: HudState }) {
                 )}
                 {app === 'dex' && (
                   <div className="flex flex-col gap-1.5">
-                    <p className="text-xs text-gray-500 mb-1">已收集 {dexSet.size} / {dexEntries.length}</p>
-                    {dexEntries.map(id => {
-                      const got = dexSet.has(id);
-                      const def = ITEMS[id];
+                    <p className="text-xs text-gray-500 mb-1">已收集 {dexGot} / {dexTotal}</p>
+                    {dexGroups.map(g => {
+                      const cnt = g.ids.filter(id => got(g.kind, id)).length;
+                      const total = g.ids.length;
+                      const pct = total > 0 ? Math.round((cnt / total) * 100) : 0;
+                      const ms = DEX_MILESTONES[g.kind];
+                      const nextTier = ms?.tiers.find(t => !hud.firstFlags.includes(`m_${g.kind}_${t.key}`));
                       return (
-                        <div key={id} className={`flex items-center gap-3 rounded-2xl px-3 py-2 shadow ${got ? 'bg-white' : 'bg-gray-200/70'}`}>
-                          <span className={`text-2xl ${got ? '' : 'opacity-30 grayscale'}`}>{got ? def?.icon : '❓'}</span>
-                          <div>
-                            <p className={`text-sm font-bold ${got ? 'text-gray-800' : 'text-gray-400'}`}>{got ? def?.name : '？？？'}</p>
-                            {got && <p className="text-[10px] text-gray-400">{def?.category === 'bug' ? '🦋 昆虫' : '🐟 鱼类'} · 售价 {def?.price} 金币</p>}
+                        <div key={g.kind} className="flex flex-col gap-1.5">
+                          <div className="mt-1 flex items-baseline justify-between">
+                            <p className="text-xs font-bold text-teal-700">{g.icon} {g.name} · 已收集 {cnt}/{total}</p>
+                            <span className="text-[10px] tabular-nums text-gray-400">{pct}%</span>
                           </div>
-                          {got && <span className="ml-auto text-emerald-500 font-bold">✓</span>}
+                          {/* 收集进度条 */}
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-300">
+                            <div className="h-full rounded-full bg-emerald-400 transition-all duration-300" style={{ width: `${pct}%` }} />
+                          </div>
+                          {/* 里程碑状态 */}
+                          <p className={`text-[10px] ${nextTier ? 'text-gray-500' : 'font-bold text-amber-500'}`}>
+                            {nextTier
+                              ? `下一奖励：收集 ${nextTier.need}/${total} 种得 ${nextTier.bells ?? nextTier.miles} ${nextTier.bells !== undefined ? '金币' : '积分'}`
+                              : '🏆 全收集完成！奖励已领取'}
+                          </p>
+                          {g.ids.map(id => {
+                            const has = got(g.kind, id);
+                            const def = ITEMS[id];
+                            return (
+                              <div key={id} className={`flex items-center gap-3 rounded-2xl px-3 py-2 shadow ${has ? 'bg-white' : 'bg-gray-200/70'}`}>
+                                <span className={`text-2xl ${has ? '' : 'opacity-30 grayscale'}`}>{has ? def?.icon : '❓'}</span>
+                                <div>
+                                  <p className={`text-sm font-bold ${has ? 'text-gray-800' : 'text-gray-400'}`}>{has ? def?.name : '？？？'}</p>
+                                  {has && <p className="text-[10px] text-gray-400">{g.name} · 售价 {def?.price} 金币</p>}
+                                </div>
+                                {has && <span className="ml-auto text-emerald-500 font-bold">✓</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {app === 'skill' && (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs text-gray-500 mb-1">多钓鱼、捉虫、挖矿、种东西就能升级，每一级都有被动加成哦！</p>
+                    {SKILL_LIST.map(sk => {
+                      const s = hud.skills[sk.key] ?? { xp: 0, lv: 0 };
+                      const next = s.lv < SKILL_STEPS.length ? SKILL_STEPS[s.lv] : -1;
+                      const prev = s.lv === 0 ? 0 : SKILL_STEPS[s.lv - 1];
+                      const pct = next > 0 ? Math.min(100, Math.max(0, Math.round(((s.xp - prev) / (next - prev)) * 100))) : 100;
+                      return (
+                        <div key={sk.key} className="rounded-2xl bg-white px-3 py-2.5 shadow">
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-2xl">{sk.icon}</span>
+                            <div className="flex-1">
+                              <div className="flex items-baseline justify-between">
+                                <p className="text-sm font-bold text-gray-800">{sk.name} <span className="text-teal-600">Lv.{s.lv}</span></p>
+                                <span className="text-[10px] tabular-nums text-gray-400">{next > 0 ? `${s.xp} / ${next}` : '⭐ 已满级'}</span>
+                              </div>
+                              <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-gray-300">
+                                <div className={`h-full rounded-full transition-all duration-300 ${next > 0 ? 'bg-violet-400' : 'bg-amber-400'}`} style={{ width: `${pct}%` }} />
+                              </div>
+                            </div>
+                          </div>
+                          <p className="mt-1 text-[10px] text-gray-500">
+                            {s.lv > 0 ? `当前被动：${sk.passive(s.lv)}` : `升级解锁：${sk.passive(1)}`}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {app === 'award' && (
+                  <div className="flex flex-col gap-1.5">
+                    <p className="text-xs text-gray-500 mb-1">达成条件自动解锁，奖励积分！已解锁 {hud.unlockedAch.length} / {ACHIEVEMENTS.length}</p>
+                    {ACHIEVEMENTS.map(a => {
+                      const unlocked = hud.unlockedAch.includes(a.id);
+                      const cur = a.cond === 'dex' ? dexGot : (hud.stats[a.cond] ?? 0);
+                      return (
+                        <div key={a.id} className={`rounded-2xl px-3 py-2 shadow ${unlocked ? 'bg-amber-50 border-2 border-amber-300' : 'bg-gray-200/70'}`}>
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-2xl">{unlocked ? a.icon : '🔒'}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-baseline justify-between gap-2">
+                                <p className={`text-sm font-bold ${unlocked ? 'text-amber-700' : 'text-gray-500'}`}>{a.name}</p>
+                                {unlocked
+                                  ? <span className="shrink-0 text-[10px] font-bold text-amber-600">🏆 +{a.reward} 积分</span>
+                                  : <span className="shrink-0 text-[10px] tabular-nums text-gray-400">{Math.min(cur, a.need)}/{a.need}</span>}
+                              </div>
+                              <p className="text-[10px] text-gray-500 leading-tight">{a.desc}</p>
+                            </div>
+                          </div>
                         </div>
                       );
                     })}
