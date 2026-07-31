@@ -72,6 +72,22 @@ interface Interactable {
 
 const FRUIT_SET = new Set(['apple', 'cherry', 'orange', 'peach']);
 
+// —— updateSky 每帧零分配：预分配颜色常量与临时色（VR 性能优化报告 #6）——
+
+const SKY_COL_DAY = new THREE.Color(0x87ceeb);
+
+const SKY_COL_NIGHT = new THREE.Color(0x101736);
+
+const SKY_COL_DAWN = new THREE.Color(0xffb37a);
+
+const SKY_COL_DUSK = new THREE.Color(0xd97a9e);
+
+const SKY_COL_RAIN = new THREE.Color(0x6a7684);
+
+const SKY_COL_SUNSET = new THREE.Color(0xff8a3a);
+
+const SKY_TMP = new THREE.Color();
+
 
 
 export class Game {
@@ -380,6 +396,8 @@ export class Game {
 
   private cloudT = 0;
 
+  private vrLightNight: boolean | null = null; // VR 恒定光照已写入的 isNight 快照（null = 尚未写入，进入 VR 时需写一次）
+
   private chatCd = 20;             // 村民聊天的全局冷却
 
   private lastNightFlag: boolean | null = null;
@@ -498,7 +516,47 @@ export class Game {
 
       geo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
 
-      this.rain = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xbfd8f0, size: 0.16, transparent: true, opacity: 0.75 }));
+      // Shader 方案（VR 性能优化报告第 8 条）：雨滴动画（下落/斜风/循环）全部在顶点着色器完成，
+      // CPU 每帧 0 顶点写入、0 顶点缓冲上传。视觉参数与旧 PointsMaterial 一致：颜色/大小/透明度/范围。
+      const rainMat = new THREE.ShaderMaterial({
+        transparent: true,
+        uniforms: {
+          uTime: { value: 0 },
+          uSize: { value: 0.16 },
+          uColor: { value: new THREE.Color(0xbfd8f0) },
+          uOpacity: { value: 0.75 },
+          uFallSpeed: { value: 26 },
+          uWindSpeed: { value: 3.5 },
+          uHeight: { value: 24 },
+          uWidth: { value: 46 },
+        },
+        vertexShader: `
+          uniform float uTime, uSize, uFallSpeed, uWindSpeed, uHeight, uWidth;
+          void main() {
+            // 每粒子固定随机相位：由初始位置哈希得到（几何体创建后不再变化，等价于旧版随机初相位）
+            float phase = fract(sin(dot(position.xy, vec2(12.9898, 78.233))) * 43758.5453);
+            // 竖直下落：y 从 uHeight 匀速落到 0，触底后取模循环回顶部（速度 uFallSpeed）
+            float cyc = uHeight / uFallSpeed;
+            float tt = mod(uTime + phase * cyc, cyc);
+            float y = uHeight - uFallSpeed * tt;
+            // 斜风：x 匀速左移（速度 uWindSpeed），越过 -23 后从 +23 折回，保持 46 宽范围
+            float xcyc = uWidth / uWindSpeed;
+            float tw = mod(uTime, xcyc);
+            float x = mod(position.x - uWindSpeed * tw + uWidth * 0.5, uWidth) - uWidth * 0.5;
+            vec4 mv = modelViewMatrix * vec4(x, y, position.z, 1.0);
+            gl_PointSize = uSize * (300.0 / -mv.z); // 与 PointsMaterial 相同的世界尺寸衰减
+            gl_Position = projectionMatrix * mv;
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 uColor;
+          uniform float uOpacity;
+          void main() {
+            gl_FragColor = vec4(uColor, uOpacity);
+          }
+        `,
+      });
+      this.rain = new THREE.Points(geo, rainMat);
 
       this.rain.visible = false;
 
@@ -7581,23 +7639,12 @@ export class Game {
 
     this.rain.position.set(this.playerPos.x, this.playerPos.y, this.playerPos.z);
 
-    const attr = this.rain.geometry.getAttribute('position') as THREE.BufferAttribute;
-
-    const a = attr.array as Float32Array;
-
-    for (let i = 0; i < a.length; i += 3) {
-
-      a[i + 1] -= 26 * dt;
-
-      a[i] -= 3.5 * dt; // 斜风
-
-      if (a[i + 1] < 0) { a[i + 1] = 24; a[i] = Math.random() * 46 - 23; a[i + 2] = Math.random() * 46 - 23; }
-
-      if (a[i] < -23) a[i] = 23;
-
-    }
-
-    attr.needsUpdate = true;
+    // Shader 方案：动画在顶点着色器内完成，CPU 只推进一个 uniform 时间，
+    // 不再每帧改写 900×3 顶点数组、不再 needsUpdate 触发顶点缓冲上传（VR 性能优化报告第 8 条）。
+    // 时间以 276s 取模：24/26 与 46/3.5 两个周期的公倍数（299 与 21 个整周期），
+    // 取模不产生跳变，同时避免长跑后 float 精度漂移。
+    const mat = this.rain.material as THREE.ShaderMaterial;
+    mat.uniforms.uTime.value = (mat.uniforms.uTime.value + dt) % 276;
 
   }
 
@@ -8341,19 +8388,27 @@ export class Game {
 
       if (!v.target) {
 
+        // 复用村民自己的临时 Vector3，避免每次选目标都 new 一次
+
+        const targetV = (v as unknown as { targetV?: THREE.Vector3 }).targetV ??= new THREE.Vector3();
+
+        const limit2 = (HALF - 8) * (HALF - 8);
+
         for (let tries = 0; tries < 12; tries++) {
 
           const nx = pos.x + (Math.random() - 0.5) * 24;
 
           const nz = pos.z + (Math.random() - 0.5) * 24;
 
-          if (Math.hypot(nx, nz) > HALF - 8) continue;
+          if (nx * nx + nz * nz > limit2) continue;
 
           if (isWaterAt(nx, nz)) continue;
 
-          if (this.world.colliders.some(c => Math.hypot(nx - c.x, nz - c.z) < c.r + 1)) continue;
+          if (this.world.colliders.some(c => { const cdx = nx - c.x, cdz = nz - c.z; const r = c.r + 1; return cdx * cdx + cdz * cdz < r * r; })) continue;
 
-          v.target = new THREE.Vector3(nx, 0, nz);
+          targetV.set(nx, 0, nz);
+
+          v.target = targetV;
 
           break;
 
@@ -8365,7 +8420,7 @@ export class Game {
 
       const dx = v.target.x - pos.x, dz = v.target.z - pos.z;
 
-      const d = Math.hypot(dx, dz);
+      const d = Math.sqrt(dx * dx + dz * dz);
 
       if (d < 0.5) {
 
@@ -8385,13 +8440,17 @@ export class Game {
 
           const cdx = nx - c.x, cdz = nz - c.z;
 
-          const cd = Math.hypot(cdx, cdz);
+          const cd2 = cdx * cdx + cdz * cdz;
 
-          if (cd < c.r + 0.6 && cd > 0.001) {
+          const lim = c.r + 0.6;
 
-            nx = c.x + (cdx / cd) * (c.r + 0.6);
+          if (cd2 < lim * lim && cd2 > 1e-6) {
 
-            nz = c.z + (cdz / cd) * (c.r + 0.6);
+            const cd = Math.sqrt(cd2);
+
+            nx = c.x + (cdx / cd) * lim;
+
+            nz = c.z + (cdz / cd) * lim;
 
           }
 
@@ -8483,33 +8542,25 @@ export class Game {
 
     this.sun.target.position.copy(this.playerPos);
 
-    const day = new THREE.Color(0x87ceeb);
+    const sky = SKY_TMP; // 复用模块级临时色，避免每帧 new/clone
 
-    const night = new THREE.Color(0x101736);
+    if (t < 5) sky.copy(SKY_COL_NIGHT);
 
-    const dawn = new THREE.Color(0xffb37a);
+    else if (t < 7) sky.copy(SKY_COL_NIGHT).lerp(SKY_COL_DAWN, (t - 5) / 2);
 
-    const dusk = new THREE.Color(0xd97a9e);
+    else if (t < 9) sky.copy(SKY_COL_DAWN).lerp(SKY_COL_DAY, (t - 7) / 2);
 
-    let sky: THREE.Color;
+    else if (t < 17) sky.copy(SKY_COL_DAY);
 
-    if (t < 5) sky = night.clone();
+    else if (t < 19) sky.copy(SKY_COL_DAY).lerp(SKY_COL_DUSK, (t - 17) / 2);
 
-    else if (t < 7) sky = night.clone().lerp(dawn, (t - 5) / 2);
+    else if (t < 21) sky.copy(SKY_COL_DUSK).lerp(SKY_COL_NIGHT, (t - 19) / 2);
 
-    else if (t < 9) sky = dawn.clone().lerp(day, (t - 7) / 2);
-
-    else if (t < 17) sky = day.clone();
-
-    else if (t < 19) sky = day.clone().lerp(dusk, (t - 17) / 2);
-
-    else if (t < 21) sky = dusk.clone().lerp(night, (t - 19) / 2);
-
-    else sky = night.clone();
+    else sky.copy(SKY_COL_NIGHT);
 
     // 雨天：白天压成铅灰色，阳光减弱
 
-    if (this.weather === 'rain' && !isNight) sky.lerp(new THREE.Color(0x6a7684), 0.62);
+    if (this.weather === 'rain' && !isNight) sky.lerp(SKY_COL_RAIN, 0.62);
 
     this.scene.background = sky;
 
@@ -8567,7 +8618,7 @@ export class Game {
 
       const low = Math.max(0, 1 - sy * 2.2);
 
-      (this.sunDisc.material as THREE.MeshBasicMaterial).color.setHex(0xffdf5a).lerp(new THREE.Color(0xff8a3a), low);
+      (this.sunDisc.material as THREE.MeshBasicMaterial).color.setHex(0xffdf5a).lerp(SKY_COL_SUNSET, low);
 
       // 满月：18 点升起、6 点落下
 
@@ -8611,6 +8662,8 @@ export class Game {
 
         const c = this.clouds[i];
 
+        if (!c.visible) continue; // VR 下云不可见：跳过每帧 position/opacity/color 写入（非 VR 行为完全不变）
+
         c.position.x += 0.016;
 
         const cWrap = 160 * ck;
@@ -8631,17 +8684,25 @@ export class Game {
 
     if (this.vrSys.active) {
 
-      // VR 模式：锁定恒定光照（避免每帧 GPU uniform 写入）
+      // VR 模式：锁定恒定光照（避免每帧 GPU uniform 写入）；仅进入 VR 或 isNight 翻转时写一次
 
-      this.sun.intensity = isNight ? 0.20 : 0.85;
+      if (this.vrLightNight !== isNight) {
 
-      this.sun.color.set(isNight ? 0x8fa8ff : 0xfff4e0);
+        this.vrLightNight = isNight;
 
-      this.ambient.intensity = isNight ? 0.35 : 0.50;
+        this.sun.intensity = isNight ? 0.20 : 0.85;
 
-      this.hemi.intensity = 0.4;
+        this.sun.color.set(isNight ? 0x8fa8ff : 0xfff4e0);
+
+        this.ambient.intensity = isNight ? 0.35 : 0.50;
+
+        this.hemi.intensity = 0.4;
+
+      }
 
     } else {
+
+      this.vrLightNight = null; // 离开 VR：复位快照，下次进入 VR 时重新写入
 
       this.sun.intensity = isNight ? 0.18 : 0.4 + dayF * 0.8;
 

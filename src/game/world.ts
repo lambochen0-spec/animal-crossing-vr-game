@@ -368,6 +368,12 @@ export class Fish {
 }
 
 // ---------------- 世界 ----------------
+
+// 路灯灯泡/光晕共享材质：21 盏灯同色同参数，昼夜动画（emissive/opacity）全局同步，
+// 共享后 world.ts 每帧的昼夜切换对所有灯效果不变（不再每盏 new 一次）
+const lampBulbMat = new THREE.MeshLambertMaterial({ color: 0xfff2c0, emissive: 0x000000 });
+const lampPoolMat = new THREE.MeshBasicMaterial({ map: glowPoolTexture(), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+
 export class World {
   // 静态建筑/装饰合并：建成后不动的物体合并成大 mesh，大幅降低 draw call（VR 优化）
   private mergables: THREE.Object3D[] = [];
@@ -632,6 +638,7 @@ export class World {
       }
     }
     this.group.add(deck);
+    this.mergables.push(deck); // 桥板/栏杆/桥墩：静态，并入合并（贴图桥板走纹理桶）
     // 桥两侧护栏不设碰撞，桥面由 onBridge 判定
   }
 
@@ -723,7 +730,7 @@ export class World {
   }
 
   // 把登记过的静态建筑/装饰合并成少量大 mesh（按 60m 区块 + 材质分桶）
-  // 只合并不透明、无贴图的纯色 MeshLambert 件；贴图/半透明/会动的保持原样
+  // 只合并不透明的 MeshLambert 件（纯色或共享贴图，如岩石/桥板）；半透明/非 Lambert（光晕/emoji 牌等）保持原样
   mergeStaticDecor() {
     if (this.staticMerged) return;
     this.staticMerged = true;
@@ -731,27 +738,31 @@ export class World {
     const matCache = new Map<string, THREE.MeshLambertMaterial>();
     const buckets = new Map<string, { mat: THREE.MeshLambertMaterial; geos: THREE.BufferGeometry[] }>();
     for (const root of this.mergables) {
-      root.updateMatrixWorld(true);
+      root.updateWorldMatrix(true, true);
       const meshes: THREE.Mesh[] = [];
       root.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
       for (const mesh of meshes) {
         const mat = mesh.material as THREE.MeshLambertMaterial;
         if (Array.isArray(mat) || !mat.isMeshLambertMaterial) continue;
-        if (mat.map || mat.transparent) continue; // emoji 牌/贴图/玻璃等不合并（原件保留在场景）
+        if (mat.transparent) continue; // 半透明件（玻璃/光晕等）不合并（原件保留在场景）
         const e = mesh.matrixWorld.elements;
         const cx = Math.floor(e[12] / CHUNK), cz = Math.floor(e[14] / CHUNK);
-        const mKey = `${mat.color.getHexString()}|${mat.emissive.getHexString()}`;
+        const mKey = `${mat.color.getHexString()}|${mat.emissive.getHexString()}|${mat.map ? mat.map.uuid : ''}`;
         const bKey = `${mKey}|${cx},${cz}`;
         let bucket = buckets.get(bKey);
         if (!bucket) {
           let m2 = matCache.get(mKey);
-          if (!m2) { m2 = new THREE.MeshLambertMaterial({ color: mat.color.getHex(), emissive: mat.emissive.getHex() }); matCache.set(mKey, m2); }
+          if (!m2) {
+            m2 = new THREE.MeshLambertMaterial({ color: mat.color.getHex(), emissive: mat.emissive.getHex() });
+            if (mat.map) m2.map = mat.map; // 共享同一纹理实例，外观与原件完全一致
+            matCache.set(mKey, m2);
+          }
           bucket = { mat: m2, geos: [] };
           buckets.set(bKey, bucket);
         }
         const geo = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
         bucket.geos.push(geo);
-        mesh.removeFromParent(); // 只移除被合并的件，贴图/半透明件留在原建筑上
+        mesh.removeFromParent(); // 只移除被合并的件，半透明/非 Lambert 件留在原建筑上
       }
     }
     let mergedCount = 0;
@@ -1397,24 +1408,26 @@ export class World {
     ];
     for (const [lx, lz] of lampSpots) {
       const lamp = new THREE.Group();
-      lamp.add(box(0.22, 3, 0.22, lampMat, 0, 1.5, 0));
-      const bulbMat = new THREE.MeshLambertMaterial({ color: 0xfff2c0, emissive: 0x000000 });
-      lamp.add(box(0.55, 0.55, 0.55, bulbMat, 0, 3.1, 0));
+      // 灯柱：纯静态，并入静态合并（合并后外观不变）；灯泡/光晕是动态材质（emissive/opacity 昼夜变化），保留原样不合并
+      const pole = new THREE.Group();
+      pole.add(box(0.22, 3, 0.22, lampMat, 0, 1.5, 0));
+      lamp.add(pole);
+      lamp.add(box(0.55, 0.55, 0.55, lampBulbMat, 0, 3.1, 0));
       const light = new THREE.PointLight(0xffd9a0, 0, 22);
       light.decay = 1; // 衰减放缓，光线能到达地面
       light.position.set(0, 2.7, 0);
       lamp.add(light);
       // 地面光晕（径向渐变：中间亮、边缘柔和消失）
-      const poolMat = new THREE.MeshBasicMaterial({ map: glowPoolTexture(), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-      const pool = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 6.4), poolMat);
+      const pool = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 6.4), lampPoolMat);
       pool.rotation.x = -Math.PI / 2;
       pool.position.y = 0.1;
       lamp.add(pool);
-      this.lampPools.push(poolMat);
+      this.lampPools.push(lampPoolMat);
       this.lamps.push(light);
-      this.lampBulbs.push(bulbMat);
+      this.lampBulbs.push(lampBulbMat);
       lamp.position.set(lx, groundHeight(lx, lz), lz);
       this.group.add(lamp);
+      this.mergables.push(pole);
       this.colliders.push({ x: lx, z: lz, r: 0.5 });
     }
 
@@ -1579,6 +1592,8 @@ export class World {
       g.add(box(0.7, 0.5, 0.7, mat, -0.7, 0.25, -0.3));
       g.position.set(p[0], groundHeight(p[0], p[1]), p[1]);
       this.group.add(g);
+      // 岩石需要互动（敲击晃动 game.ts 操作 r.group.rotation.z），不能并入静态合并
+      // this.mergables.push(g);
       this.rocks.push({ x: p[0], z: p[1], group: g, cooldownUntil: 0 });
       this.colliders.push({ x: p[0], z: p[1], r: 1.2 });
     }
@@ -1846,14 +1861,15 @@ export class World {
   // ---------- 帧更新 ----------
   private waterT = 0;
   // decoSkip：VR 保帧率时隔帧跳过纯装饰动画（花瓣/萤火虫），物理与交互不受影响
+  private lampNight: boolean | null = null; // 昼夜翻转缓存：光晕/灯泡只在翻转帧更新
   update(dt: number, _time24: number, isNight: boolean, now: number, decoSkip = false) {
     // 水面流动 & 灯光
     this.waterT += dt * 0.02;
     const wOff = this.waterT;
     const wOff2 = this.waterT * 0.6;
-    for (const w of this.waterChunks) {
-      (w.material as THREE.MeshLambertMaterial).map!.offset.set(wOff, wOff2);
-    }
+    // 49 块水面共享同一个材质（buildWater 里创建），offset 每帧只需 set 一次
+    const waterMat = this.waterChunks[0]?.material as THREE.MeshLambertMaterial | undefined;
+    if (waterMat) waterMat.map!.offset.set(wOff, wOff2);
 
     // 树摇摆 & 结果（实例矩阵更新）
     for (const t of this.trees) {
@@ -1871,13 +1887,14 @@ export class World {
         if (t.regrowT <= 0) this.growFruits(t);
       }
     }
-    // 果实下落
-    for (const f of [...this.falling]) {
+    // 果实下落（倒序遍历原地删除，避免每帧 spread 拷贝）
+    for (let i = this.falling.length - 1; i >= 0; i--) {
+      const f = this.falling[i];
       f.vy -= dt * 14;
       f.mesh.position.y += f.vy * dt;
       if (f.mesh.position.y <= f.groundY + 0.25) {
         this.group.remove(f.mesh);
-        this.falling.splice(this.falling.indexOf(f), 1);
+        this.falling.splice(i, 1);
         const pos = f.mesh.position.clone();
         pos.y = f.groundY + 0.3;
         pos.x += (Math.random() - 0.5) * 1.6;
@@ -1885,14 +1902,15 @@ export class World {
         this.addPickup(f.item, pos, undefined, false);
       }
     }
-    // 树苗成长
-    for (const s of [...this.saplings]) {
+    // 树苗成长（倒序遍历原地删除，避免每帧 spread 拷贝）
+    for (let i = this.saplings.length - 1; i >= 0; i--) {
+      const s = this.saplings[i];
       s.growT -= dt;
       const sc = 1 + (75 - s.growT) / 75;
       s.group.scale.setScalar(Math.min(1.6, sc));
       if (s.growT <= 0) {
         this.group.remove(s.group);
-        this.saplings.splice(this.saplings.indexOf(s), 1);
+        this.saplings.splice(i, 1);
         const fruit = s.fruit ?? FRUIT_IDS[Math.floor(Math.random() * FRUIT_IDS.length)]; // 移栽的果树苗保持原品种
         const tree = new Tree(s.x, s.z, fruit, this.leafMat, this.trunkMat);
         this.trees.push(tree);
@@ -1900,8 +1918,9 @@ export class World {
         this.colliders.push({ x: s.x, z: s.z, r: 0.85 });
       }
     }
-    // 虫
-    for (const b of [...this.bugs]) {
+    // 虫（倒序遍历：removeBug 用 filter 重赋值，反向读下标不受删除影响，避免每帧 spread 拷贝）
+    for (let i = this.bugs.length - 1; i >= 0; i--) {
+      const b = this.bugs[i];
       b.update(dt);
       if (b.fleeT < -2) this.removeBug(b);
     }
@@ -1936,9 +1955,15 @@ export class World {
     (this.moon.material as THREE.SpriteMaterial).opacity = nightF;
     this.moonLight.intensity = this.vrMode ? 0 : nightF * 0.4;
     (this.fireflies.material as THREE.PointsMaterial).opacity = nightF;
-    if (!this.vrMode) for (const l of this.lamps) l.intensity = nightF * 2.4;
-    for (const pm of this.lampPools) pm.opacity = nightF * 0.45;
-    for (const b of this.lampBulbs) b.emissive.set(isNight ? 0xffd9a0 : 0x000000);
+    for (const l of this.lamps) {
+      if (!this.vrMode) l.intensity = nightF * 2.4;
+      l.visible = !this.vrMode;
+    }
+    if (this.lampNight !== isNight) { // 光晕/灯泡只在昼夜翻转时更新
+      this.lampNight = isNight;
+      for (const pm of this.lampPools) pm.opacity = nightF * 0.45;
+      for (const b of this.lampBulbs) b.emissive.set(isNight ? 0xffd9a0 : 0x000000);
+    }
     // 花瓣飘落（纯装饰，VR 保帧率时隔帧跳过；跳过的帧用双倍 dt 补偿节奏）
     if (!decoSkip) {
       const pp = this.petals.geometry.attributes.position as THREE.BufferAttribute;

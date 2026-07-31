@@ -5,8 +5,35 @@ import { makePokeBall, makeFruitDrop } from './items3d';
 import type { VillagerDef } from './data';
 import { NPC_PROFILES } from './villagers';
 
+// ---- 零共享优化：几何体 / 材质按"每种一份"共享，实例数不再随角色数量线性增长 ----
+// BoxGeometry 按尺寸缓存（尺寸均来自代码字面量，种类有限，不会无限膨胀）。
+// castShadow 是 Mesh 属性而非 Geometry 属性，共享几何体不影响阴影语义。
+const boxGeoCache = new Map<string, THREE.BoxGeometry>();
+function boxGeo(w: number, h: number, d: number): THREE.BoxGeometry {
+  const key = `${w}x${h}x${d}`;
+  let g = boxGeoCache.get(key);
+  if (!g) { g = new THREE.BoxGeometry(w, h, d); boxGeoCache.set(key, g); }
+  return g;
+}
+// 纯色 Lambert 材质按归一化 (color, emissive) 缓存共享。
+// 仅用于确认后续不会被单独修改的材质；会被逐实例改写的材质不共享（见构造函数鞋材质注释）。
+const lamMatCache = new Map<string, THREE.MeshLambertMaterial>();
+function mLam(color: THREE.ColorRepresentation, emissive: THREE.ColorRepresentation = 0): THREE.MeshLambertMaterial {
+  const key = `${new THREE.Color(color).getHex()}|${new THREE.Color(emissive).getHex()}`;
+  let m = lamMatCache.get(key);
+  if (!m) { m = new THREE.MeshLambertMaterial({ color, emissive }); lamMatCache.set(key, m); }
+  return m;
+}
+// 表情材质：贴图已按外观共享，材质按贴图实例共享
+const faceMatCache = new Map<THREE.CanvasTexture, THREE.MeshLambertMaterial>();
+function faceMat(tex: THREE.CanvasTexture): THREE.MeshLambertMaterial {
+  let m = faceMatCache.get(tex);
+  if (!m) { m = new THREE.MeshLambertMaterial({ map: tex }); faceMatCache.set(tex, m); }
+  return m;
+}
+
 function bx(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0) {
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  const m = new THREE.Mesh(boxGeo(w, h, d), mat);
   m.position.set(x, y, z);
   m.castShadow = true;
   return m;
@@ -96,11 +123,13 @@ export class Character {
 
   constructor(opts: CharacterOpts) {
     const { skin, shirt, pants, shoes, hair, face } = opts;
-    const skinMat = new THREE.MeshLambertMaterial({ color: skin });
-    const shirtMat = new THREE.MeshLambertMaterial({ color: shirt });
-    const pantsMat = new THREE.MeshLambertMaterial({ color: pants });
+    const skinMat = mLam(skin);
+    const shirtMat = mLam(shirt);
+    const pantsMat = mLam(pants);
+    // 鞋材质不共享：Meowth 构造时会把本角色鞋/鞋头颜色逐个改写为棕色（color.set），
+    // 若共享实例，改写会泄漏到其他同鞋色的角色，改变外观。
     const shoeMat = new THREE.MeshLambertMaterial({ color: shoes });
-    const hairMat = new THREE.MeshLambertMaterial({ color: hair });
+    const hairMat = mLam(hair);
 
     // ---- 小短腿 + 鞋子 ----
     for (const [grp, sx] of [[this.legL, -0.17], [this.legR, 0.17]] as const) {
@@ -117,7 +146,7 @@ export class Character {
     const hips = bx(0.68, 0.14, 0.46, shirtMat, 0, 0.4, 0);
     this.body.add(torso, belly, hips);
     // ---- 细短手臂（上端贴着身体两侧，略靠前，垂下来在大头下缘露出小手） ----
-    const sleeveMat = new THREE.MeshLambertMaterial({ color: opts.sleeves ?? shirt });
+    const sleeveMat = mLam(opts.sleeves ?? shirt);
     for (const [grp, sx] of [[this.armL, -0.46], [this.armR, 0.46]] as const) {
       const arm = bx(0.18, 0.38, 0.22, sleeveMat, 0, -0.19, 0);
       const hand = bx(0.2, 0.16, 0.22, skinMat, 0, -0.44, 0);
@@ -131,10 +160,10 @@ export class Character {
       skinMat, skinMat,
       hairMat,  // 头顶
       skinMat,  // 下巴
-      new THREE.MeshLambertMaterial({ map: faceTex }), // 脸
+      faceMat(faceTex), // 脸（按贴图共享）
       hairMat,  // 后脑
     ];
-    const head = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.15, 1.05), headMats);
+    const head = new THREE.Mesh(boxGeo(1.3, 1.15, 1.05), headMats);
     head.castShadow = true;
     this.headG.add(head);
     // 圆润补块（无脸区域用肤色/毛色）
@@ -165,7 +194,7 @@ export class Character {
       const backPanel = bx(1.3, 0.52, 0.16, hairMat, 0, 0.3, -0.55);
       const backPanelLow = bx(1.16, 0.3, 0.14, hairMat, 0, -0.02, -0.52);
       // 耳朵（正面看明显向两侧凸出，比肤色深一号形成轮廓）
-      const earSkinMat = new THREE.MeshLambertMaterial({ color: opts.earColor ?? 0xe0b48c });
+      const earSkinMat = mLam(opts.earColor ?? 0xe0b48c);
       const earL = bx(0.22, 0.26, 0.24, earSkinMat, -0.78, -0.02, 0.1);
       const earR = bx(0.22, 0.26, 0.24, earSkinMat, 0.78, -0.02, 0.1);
       // 头顶小发旋（呆毛）
@@ -177,11 +206,11 @@ export class Character {
     }
 
     // ---- 耳朵 ----
-    const earMat = new THREE.MeshLambertMaterial({ color: opts.earColor ?? hair });
-    const innerMat = new THREE.MeshLambertMaterial({ color: opts.muzzle ?? '#ffd9d9' });
+    const earMat = mLam(opts.earColor ?? hair);
+    const innerMat = mLam(opts.muzzle ?? '#ffd9d9');
     if (face === 'pikachu') {
       // 皮卡丘：长耳朵（黄色耳根 + 黑色耳尖，向外撇）
-      const tipMat = new THREE.MeshLambertMaterial({ color: 0x26262e });
+      const tipMat = mLam(0x26262e);
       for (const sx of [-0.42, 0.42]) {
         const base = bx(0.24, 0.55, 0.18, earMat, sx, 0.9, 0);
         base.rotation.z = sx > 0 ? -0.28 : 0.28;
@@ -191,7 +220,7 @@ export class Character {
       }
     } else if (face === 'meowth') {
       // 喵喵：尖耳朵（深耳尖）+ 额头金币
-      const tipMat = new THREE.MeshLambertMaterial({ color: 0x6b4a2f });
+      const tipMat = mLam(0x6b4a2f);
       for (const sx of [-0.4, 0.4]) {
         const ear = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.42, 4), earMat);
         ear.position.set(sx, 0.76, 0);
@@ -199,7 +228,7 @@ export class Character {
         this.headG.add(ear, bx(0.16, 0.14, 0.16, tipMat, sx, 0.94, 0));
       }
       // 额头上的金币
-      const coinMat = new THREE.MeshLambertMaterial({ color: 0xe8c33b, emissive: 0x554400 });
+      const coinMat = mLam(0xe8c33b, 0x554400);
       this.headG.add(bx(0.3, 0.34, 0.1, coinMat, 0, 0.3, 0.56));
     } else if (face === 'jigglypuff') {
       // 胖丁：小尖耳 + 额头卷毛
@@ -227,13 +256,13 @@ export class Character {
       }
     } else if (face === 'psyduck') {
       // 可达鸭：头顶三根黑毛 + 扁扁的喙
-      const hairMat2 = new THREE.MeshLambertMaterial({ color: 0x26262e });
+      const hairMat2 = mLam(0x26262e);
       for (const [hx, rz] of [[-0.12, 0.3], [0, 0], [0.12, -0.3]] as const) {
         const h = bx(0.05, 0.34, 0.05, hairMat2, hx, 0.88, -0.05);
         h.rotation.z = rz;
         this.headG.add(h);
       }
-      const billMat = new THREE.MeshLambertMaterial({ color: 0xe8a33b });
+      const billMat = mLam(0xe8a33b);
       this.headG.add(bx(0.52, 0.14, 0.36, billMat, 0, -0.2, 0.62));
     } else if (face === 'bulbasaur') {
       // 妙蛙种子：小尖耳（背上的球茎在躯干）
@@ -247,40 +276,40 @@ export class Character {
       // 小火龙 / 杰尼龟：圆润光头，无大耳（特征在尾巴和背上）
     } else if (face === 'penguin') {
       // 企鹅：黄色喙
-      const beakMat = new THREE.MeshLambertMaterial({ color: 0xe8a33b });
+      const beakMat = mLam(0xe8a33b);
       const beak = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.3, 4), beakMat);
       beak.position.set(0, -0.15, 0.68);
       beak.rotation.x = Math.PI / 2;
       beak.castShadow = true;
       this.headG.add(beak);
       // 白色胸腹
-      const chest = bx(0.6, 0.6, 0.06, new THREE.MeshLambertMaterial({ color: 0xf7f7f0 }), 0, 0.62, 0.28);
+      const chest = bx(0.6, 0.6, 0.06, mLam(0xf7f7f0), 0, 0.62, 0.28);
       this.body.add(chest);
     }
 
     // ---- 宝可梦躯干特征 ----
     if (face === 'eevee') {
       // 伊布：奶油色毛围脖
-      const ruffMat = new THREE.MeshLambertMaterial({ color: opts.muzzle ?? '#f7e8c9' });
+      const ruffMat = mLam(opts.muzzle ?? '#f7e8c9');
       this.body.add(bx(0.95, 0.26, 0.3, ruffMat, 0, 0.96, 0.3));
       this.body.add(bx(0.95, 0.26, 0.3, ruffMat, 0, 0.96, -0.3));
       this.body.add(bx(0.28, 0.26, 0.66, ruffMat, -0.44, 0.96, 0));
       this.body.add(bx(0.28, 0.26, 0.66, ruffMat, 0.44, 0.96, 0));
     } else if (face === 'charmander') {
       // 小火龙：奶油色胸腹
-      this.body.add(bx(0.5, 0.5, 0.06, new THREE.MeshLambertMaterial({ color: opts.muzzle ?? '#ffe8b0' }), 0, 0.62, 0.28));
+      this.body.add(bx(0.5, 0.5, 0.06, mLam(opts.muzzle ?? '#ffe8b0'), 0, 0.62, 0.28));
     } else if (face === 'squirtle') {
       // 杰尼龟：背后的龟壳（奶油壳缘 + 深棕壳面）
-      const rimMat = new THREE.MeshLambertMaterial({ color: 0xf7ecd0 });
-      const shellMat = new THREE.MeshLambertMaterial({ color: 0x8a5a3b });
+      const rimMat = mLam(0xf7ecd0);
+      const shellMat = mLam(0x8a5a3b);
       this.body.add(bx(0.62, 0.56, 0.22, rimMat, 0, 0.68, -0.3));
       this.body.add(bx(0.54, 0.48, 0.14, shellMat, 0, 0.68, -0.42));
     } else if (face === 'bulbasaur') {
       // 妙蛙种子：背上的大球茎（三层洋葱 + 深绿叶棱 + 顶部嫩芽，背面醒目）
-      const bulbMat = new THREE.MeshLambertMaterial({ color: 0x4a9a4a });
-      const bulbMat2 = new THREE.MeshLambertMaterial({ color: 0x5ab85a });
-      const bulbDark = new THREE.MeshLambertMaterial({ color: 0x3a7a3a });
-      const sprout = new THREE.MeshLambertMaterial({ color: 0x7ad46a });
+      const bulbMat = mLam(0x4a9a4a);
+      const bulbMat2 = mLam(0x5ab85a);
+      const bulbDark = mLam(0x3a7a3a);
+      const sprout = mLam(0x7ad46a);
       this.body.add(bx(0.68, 0.46, 0.44, bulbDark, 0, 1.1, -0.58));   // 底层（探出背后）
       this.body.add(bx(0.54, 0.38, 0.38, bulbMat, 0, 1.36, -0.62));   // 中层
       this.body.add(bx(0.36, 0.3, 0.3, bulbMat2, 0, 1.62, -0.6));     // 顶层
@@ -294,17 +323,17 @@ export class Character {
 
     // ---- 3D 吻部（仅伊布/小火龙这类有小吻部的） ----
     if (face === 'eevee' || face === 'charmander') {
-      const snoutMat = new THREE.MeshLambertMaterial({ color: opts.muzzle ?? '#fff3e0' });
+      const snoutMat = mLam(opts.muzzle ?? '#fff3e0');
       const snout = bx(0.4, 0.22, 0.18, snoutMat, 0, -0.2, 0.6);
-      const nose = bx(0.13, 0.1, 0.08, new THREE.MeshLambertMaterial({ color: 0x4a3025 }), 0, -0.09, 0.68);
+      const nose = bx(0.13, 0.1, 0.08, mLam(0x4a3025), 0, -0.09, 0.68);
       this.headG.add(snout, nose);
     }
 
     // ---- 尾巴 ----
-    const tailMat = new THREE.MeshLambertMaterial({ color: opts.earColor ?? hair });
+    const tailMat = mLam(opts.earColor ?? hair);
     if (face === 'pikachu') {
       // 闪电尾巴（扁平锯齿三段式，从身体右后侧高高探出）
-      const tailBrown = new THREE.MeshLambertMaterial({ color: 0x8a5a3b });
+      const tailBrown = mLam(0x8a5a3b);
       this.body.add(bx(0.2, 0.26, 0.2, tailBrown, 0, 0.42, -0.44)); // 棕色根部
       const mkBolt = (h: number, x: number, y: number, rz: number) => {
         const m = bx(0.16, h, 0.1, tailMat, x, y, -0.56);
@@ -316,7 +345,7 @@ export class Character {
       mkBolt(0.4, 0.82, 1.72, -0.3);   // 上段尾尖（高过头顶）
     } else if (face === 'meowth') {
       // 喵喵：尖耳朵（深耳尖）+ 额头金币
-      const tipMat = new THREE.MeshLambertMaterial({ color: 0x6b4a2f });
+      const tipMat = mLam(0x6b4a2f);
       for (const sx of [-0.4, 0.4]) {
         const ear = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.42, 4), earMat);
         ear.position.set(sx, 0.76, 0);
@@ -324,7 +353,7 @@ export class Character {
         this.headG.add(ear, bx(0.16, 0.14, 0.16, tipMat, sx, 0.94, 0));
       }
       // 额头上的金币
-      const coinMat = new THREE.MeshLambertMaterial({ color: 0xe8c33b, emissive: 0x554400 });
+      const coinMat = mLam(0xe8c33b, 0x554400);
       this.headG.add(bx(0.3, 0.34, 0.1, coinMat, 0, 0.3, 0.56));
     } else if (face === 'jigglypuff') {
       // 胖丁：小尖耳 + 额头卷毛
@@ -352,13 +381,13 @@ export class Character {
       }
     } else if (face === 'psyduck') {
       // 可达鸭：头顶三根黑毛 + 扁扁的喙
-      const hairMat2 = new THREE.MeshLambertMaterial({ color: 0x26262e });
+      const hairMat2 = mLam(0x26262e);
       for (const [hx, rz] of [[-0.12, 0.3], [0, 0], [0.12, -0.3]] as const) {
         const h = bx(0.05, 0.34, 0.05, hairMat2, hx, 0.88, -0.05);
         h.rotation.z = rz;
         this.headG.add(h);
       }
-      const billMat = new THREE.MeshLambertMaterial({ color: 0xe8a33b });
+      const billMat = mLam(0xe8a33b);
       this.headG.add(bx(0.52, 0.14, 0.36, billMat, 0, -0.2, 0.62));
     } else if (face === 'bulbasaur') {
       // 妙蛙种子：小尖耳（背上的球茎在躯干）
@@ -372,40 +401,40 @@ export class Character {
       // 小火龙 / 杰尼龟：圆润光头，无大耳（特征在尾巴和背上）
     } else if (face === 'penguin') {
       // 企鹅：黄色喙
-      const beakMat = new THREE.MeshLambertMaterial({ color: 0xe8a33b });
+      const beakMat = mLam(0xe8a33b);
       const beak = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.3, 4), beakMat);
       beak.position.set(0, -0.15, 0.68);
       beak.rotation.x = Math.PI / 2;
       beak.castShadow = true;
       this.headG.add(beak);
       // 白色胸腹
-      const chest = bx(0.6, 0.6, 0.06, new THREE.MeshLambertMaterial({ color: 0xf7f7f0 }), 0, 0.62, 0.28);
+      const chest = bx(0.6, 0.6, 0.06, mLam(0xf7f7f0), 0, 0.62, 0.28);
       this.body.add(chest);
     }
 
     // ---- 宝可梦躯干特征 ----
     if (face === 'eevee') {
       // 伊布：奶油色毛围脖
-      const ruffMat = new THREE.MeshLambertMaterial({ color: opts.muzzle ?? '#f7e8c9' });
+      const ruffMat = mLam(opts.muzzle ?? '#f7e8c9');
       this.body.add(bx(0.95, 0.26, 0.3, ruffMat, 0, 0.96, 0.3));
       this.body.add(bx(0.95, 0.26, 0.3, ruffMat, 0, 0.96, -0.3));
       this.body.add(bx(0.28, 0.26, 0.66, ruffMat, -0.44, 0.96, 0));
       this.body.add(bx(0.28, 0.26, 0.66, ruffMat, 0.44, 0.96, 0));
     } else if (face === 'charmander') {
       // 小火龙：奶油色胸腹
-      this.body.add(bx(0.5, 0.5, 0.06, new THREE.MeshLambertMaterial({ color: opts.muzzle ?? '#ffe8b0' }), 0, 0.62, 0.28));
+      this.body.add(bx(0.5, 0.5, 0.06, mLam(opts.muzzle ?? '#ffe8b0'), 0, 0.62, 0.28));
     } else if (face === 'squirtle') {
       // 杰尼龟：背后的龟壳（奶油壳缘 + 深棕壳面）
-      const rimMat = new THREE.MeshLambertMaterial({ color: 0xf7ecd0 });
-      const shellMat = new THREE.MeshLambertMaterial({ color: 0x8a5a3b });
+      const rimMat = mLam(0xf7ecd0);
+      const shellMat = mLam(0x8a5a3b);
       this.body.add(bx(0.62, 0.56, 0.22, rimMat, 0, 0.68, -0.3));
       this.body.add(bx(0.54, 0.48, 0.14, shellMat, 0, 0.68, -0.42));
     } else if (face === 'bulbasaur') {
       // 妙蛙种子：背上的大球茎（三层洋葱 + 深绿叶棱 + 顶部嫩芽，背面醒目）
-      const bulbMat = new THREE.MeshLambertMaterial({ color: 0x4a9a4a });
-      const bulbMat2 = new THREE.MeshLambertMaterial({ color: 0x5ab85a });
-      const bulbDark = new THREE.MeshLambertMaterial({ color: 0x3a7a3a });
-      const sprout = new THREE.MeshLambertMaterial({ color: 0x7ad46a });
+      const bulbMat = mLam(0x4a9a4a);
+      const bulbMat2 = mLam(0x5ab85a);
+      const bulbDark = mLam(0x3a7a3a);
+      const sprout = mLam(0x7ad46a);
       this.body.add(bx(0.68, 0.46, 0.44, bulbDark, 0, 1.1, -0.58));   // 底层（探出背后）
       this.body.add(bx(0.54, 0.38, 0.38, bulbMat, 0, 1.36, -0.62));   // 中层
       this.body.add(bx(0.36, 0.3, 0.3, bulbMat2, 0, 1.62, -0.6));     // 顶层
@@ -419,9 +448,9 @@ export class Character {
 
     // ---- 3D 吻部（仅伊布/小火龙这类有小吻部的） ----
     if (face === 'eevee' || face === 'charmander') {
-      const snoutMat = new THREE.MeshLambertMaterial({ color: opts.muzzle ?? '#fff3e0' });
+      const snoutMat = mLam(opts.muzzle ?? '#fff3e0');
       const snout = bx(0.4, 0.22, 0.18, snoutMat, 0, -0.2, 0.6);
-      const nose = bx(0.13, 0.1, 0.08, new THREE.MeshLambertMaterial({ color: 0x4a3025 }), 0, -0.09, 0.68);
+      const nose = bx(0.13, 0.1, 0.08, mLam(0x4a3025), 0, -0.09, 0.68);
       this.headG.add(snout, nose);
     }
 
@@ -429,16 +458,16 @@ export class Character {
     if (face === 'meowth') {
       // 卷卷的尾巴（末端棕色）
       this.body.add(bx(0.1, 0.1, 0.5, tailMat, 0, 0.32, -0.45));
-      this.body.add(bx(0.22, 0.22, 0.12, new THREE.MeshLambertMaterial({ color: 0x8a5a3b }), 0, 0.46, -0.68));
+      this.body.add(bx(0.22, 0.22, 0.12, mLam(0x8a5a3b), 0, 0.46, -0.68));
     } else if (face === 'eevee') {
       // 蓬松大尾巴（奶油色尾尖）
       this.body.add(bx(0.36, 0.6, 0.3, tailMat, 0, 0.56, -0.46));
-      this.body.add(bx(0.3, 0.34, 0.24, new THREE.MeshLambertMaterial({ color: opts.muzzle ?? '#f7e8c9' }), 0, 1.0, -0.46));
+      this.body.add(bx(0.3, 0.34, 0.24, mLam(opts.muzzle ?? '#f7e8c9'), 0, 1.0, -0.46));
     } else if (face === 'charmander') {
       // 火焰尾巴（尾尖燃烧的火焰）
       this.body.add(bx(0.16, 0.16, 0.42, tailMat, 0, 0.32, -0.42));
-      const flameOut = new THREE.MeshLambertMaterial({ color: 0xe8452c, emissive: 0x882000 });
-      const flameIn = new THREE.MeshLambertMaterial({ color: 0xf7d02c, emissive: 0xaa6600 });
+      const flameOut = mLam(0xe8452c, 0x882000);
+      const flameIn = mLam(0xf7d02c, 0xaa6600);
       this.body.add(bx(0.2, 0.3, 0.18, flameOut, 0, 0.58, -0.64));
       this.body.add(bx(0.12, 0.2, 0.12, flameIn, 0, 0.58, -0.62));
     } else if (face === 'squirtle') {
@@ -454,12 +483,12 @@ export class Character {
       this.body.add(bx(0.12, 0.12, 0.1, tailMat, 0.06, 0.5, -0.5));
     } else if (face === 'penguin') {
       // 企鹅脚蹼
-      const footMat = new THREE.MeshLambertMaterial({ color: 0xe8a33b });
+      const footMat = mLam(0xe8a33b);
       for (const sx of [-0.17, 0.17]) {
         this.body.add(bx(0.3, 0.08, 0.4, footMat, sx, 0.04, 0.06));
       }
       // 背部白色披风斑 + 小尾羽
-      this.body.add(bx(0.5, 0.56, 0.08, new THREE.MeshLambertMaterial({ color: 0xe8f0f7 }), 0, 0.66, -0.36));
+      this.body.add(bx(0.5, 0.56, 0.08, mLam(0xe8f0f7), 0, 0.66, -0.36));
       this.body.add(bx(0.22, 0.2, 0.14, tailMat, 0, 0.34, -0.44));
     }
 
@@ -470,28 +499,29 @@ export class Character {
   private buildTools() {
     // 虫网
     const net = new THREE.Group();
-    const stickMat = new THREE.MeshLambertMaterial({ color: 0x8a6239 });
+    const stickMat = mLam(0x8a6239);
     net.add(bx(0.08, 1.1, 0.08, stickMat, 0, -0.5, 0));
-    const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.05, 6, 10), new THREE.MeshLambertMaterial({ color: 0xd0d0d8 }));
+    const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.05, 6, 10), mLam(0xd0d0d8));
     hoop.position.set(0, -1.15, 0);
     net.add(hoop);
+    // 虫网网兜：带 transparent/opacity 特殊参数，保持每实例（不属于纯色缓存范畴）
     const bag = bx(0.5, 0.5, 0.1, new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 }), 0, -1.15, -0.15);
     net.add(bag);
     // 鱼竿
     const rod = new THREE.Group();
-    rod.add(bx(0.07, 1.5, 0.07, new THREE.MeshLambertMaterial({ color: 0x6e4c2a }), 0, -0.55, 0));
-    rod.add(bx(0.04, 0.4, 0.04, new THREE.MeshLambertMaterial({ color: 0xd0d0d8 }), 0, -1.35, 0));
+    rod.add(bx(0.07, 1.5, 0.07, mLam(0x6e4c2a), 0, -0.55, 0));
+    rod.add(bx(0.04, 0.4, 0.04, mLam(0xd0d0d8), 0, -1.35, 0));
     // 铲子（铁锹：长柄 + 铲头）
     const shovel = new THREE.Group();
     shovel.add(bx(0.08, 0.9, 0.08, stickMat, 0, -0.4, 0));
-    shovel.add(bx(0.16, 0.1, 0.1, new THREE.MeshLambertMaterial({ color: 0x8a5a3b }), 0, -0.82, 0));
-    shovel.add(bx(0.3, 0.4, 0.08, new THREE.MeshLambertMaterial({ color: 0x9a9aa2 }), 0, -1.05, 0));
-    shovel.add(bx(0.34, 0.08, 0.08, new THREE.MeshLambertMaterial({ color: 0xc9c9d2 }), 0, -1.24, 0));
+    shovel.add(bx(0.16, 0.1, 0.1, mLam(0x8a5a3b), 0, -0.82, 0));
+    shovel.add(bx(0.3, 0.4, 0.08, mLam(0x9a9aa2), 0, -1.05, 0));
+    shovel.add(bx(0.34, 0.08, 0.08, mLam(0xc9c9d2), 0, -1.24, 0));
     // 斧头（木柄 + 金属斧刃）
     const axe = new THREE.Group();
     axe.add(bx(0.08, 1.0, 0.08, stickMat, 0, -0.45, 0));
-    axe.add(bx(0.26, 0.2, 0.07, new THREE.MeshLambertMaterial({ color: 0x9a9aa2 }), 0.12, -0.85, 0));
-    axe.add(bx(0.1, 0.24, 0.05, new THREE.MeshLambertMaterial({ color: 0xc9c9d2 }), 0.26, -0.85, 0));
+    axe.add(bx(0.26, 0.2, 0.07, mLam(0x9a9aa2), 0.12, -0.85, 0));
+    axe.add(bx(0.1, 0.24, 0.05, mLam(0xc9c9d2), 0.26, -0.85, 0));
 
     this.toolMeshes = { net, rod, shovel, axe };
     for (const k of Object.keys(this.toolMeshes)) {
@@ -717,7 +747,7 @@ export class Pikachu extends Villager {
     });
     this.wander = false;
     // 背上两条棕色条纹（官设）
-    const stripeMat = new THREE.MeshLambertMaterial({ color: 0x8a5a3b });
+    const stripeMat = mLam(0x8a5a3b);
     this.body.add(bx(0.5, 0.13, 0.06, stripeMat, 0, 0.86, -0.28));
     this.body.add(bx(0.5, 0.13, 0.06, stripeMat, 0, 0.62, -0.31));
   }

@@ -31,7 +31,15 @@ function dither(pix: Pix, w: number, h: number, base: string, spots: [string, nu
 }
 
 // ---------- 地形图集（48x16: 草顶 | 草侧 | 泥土 | 沙 | 沙侧 | 路 | 路侧 | 石板 | 石板侧） ----------
+// 单例缓存：terrainAtlas() 无参数，地形 / 桥面 / 矿岛桥共用同一张 144x16 图集，避免重复生成 3 次。
+// 注意：内容含 Math.random() 抖动，缓存后三处使用同一随机结果——各块纹理完全一致，反而消除刷新抖动。
+let terrainAtlasCache: THREE.CanvasTexture | null = null;
 export function terrainAtlas(): THREE.CanvasTexture {
+  if (terrainAtlasCache) return terrainAtlasCache;
+  terrainAtlasCache = buildTerrainAtlas();
+  return terrainAtlasCache;
+}
+function buildTerrainAtlas(): THREE.CanvasTexture {
   const { c, pix } = makeCanvas(144, 16);
   const R = (i: number) => i * 16;
   // 0 草顶
@@ -107,6 +115,10 @@ export function waterTexture(): THREE.CanvasTexture {
   const t = toTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.repeat.set(24, 24);
+  // 32x32 极小，mipmap 开销可忽略；开启后远距水面按 mip 级别混色，消除 24 次重复采样导致的 moiré 闪烁。
+  // magFilter 仍为 Nearest（近处像素风不变），minFilter 用 LinearMipmapLinear 平滑远距采样。
+  t.generateMipmaps = true;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
   return t;
 }
 
@@ -116,7 +128,14 @@ export function leafTexture(base = '#3e8e3a', light = '#55a54c', dark = '#2f7030
   dither(pix, 16, 16, base, [[light, 0.28], [dark, 0.22]]);
   return toTexture(c);
 }
+// 单例缓存：trunkTexture() 无参数，树干与木箱共用同一张 16x16 贴图，避免重复生成 2 次。
+let trunkTexCache: THREE.CanvasTexture | null = null;
 export function trunkTexture(): THREE.CanvasTexture {
+  if (trunkTexCache) return trunkTexCache;
+  trunkTexCache = buildTrunkTexture();
+  return trunkTexCache;
+}
+function buildTrunkTexture(): THREE.CanvasTexture {
   const { c, pix } = makeCanvas(16, 16);
   for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
     const stripe = (x % 5 === 0) || (x % 5 === 1 && y % 7 < 3);
@@ -157,6 +176,8 @@ export function flowerSvgTexture(petal: string, center: string): THREE.CanvasTex
   const ctx = canvas.getContext('2d')!;
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
   const img = new Image();
   img.onload = () => { ctx.drawImage(img, 0, 0, 64, 64); tex.needsUpdate = true; };
   img.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
@@ -194,6 +215,8 @@ export function tentSvgTexture(main: string, accent: string, door = false): THRE
   ctx.fillStyle = main; ctx.fillRect(0, 0, 256, 256); // 解码前先铺主色
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
   const img = new Image();
   img.onload = () => { ctx.drawImage(img, 0, 0, 256, 256); tex.needsUpdate = true; };
   img.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
@@ -217,6 +240,8 @@ export function tentDoorSvgTexture(): THREE.CanvasTexture {
   const ctx = canvas.getContext('2d')!;
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
   const img = new Image();
   img.onload = () => { ctx.drawImage(img, 0, 0, 128, 128); tex.needsUpdate = true; };
   img.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
@@ -224,7 +249,18 @@ export function tentDoorSvgTexture(): THREE.CanvasTexture {
 }
 
 // ---------- 角色脸（16x16：玩家 + 各宝可梦官方脸谱） ----------
+// 脸贴图缓存：按 (kind, skin, muzzle) 组合共享，相同外观的角色复用同一张贴图。
+// faceTexture 绘制完全确定性（无随机），同一 key 生成的像素逐位一致，共享不改变任何外观。
+const faceTexCache = new Map<string, THREE.CanvasTexture>();
 export function faceTexture(kind: 'player' | VillagerFace, skin: string, muzzle?: string): THREE.CanvasTexture {
+  const key = `${kind}|${skin}|${muzzle ?? ''}`;
+  const hit = faceTexCache.get(key);
+  if (hit) return hit;
+  const t = buildFaceTexture(kind, skin, muzzle);
+  faceTexCache.set(key, t);
+  return t;
+}
+function buildFaceTexture(kind: 'player' | VillagerFace, skin: string, muzzle?: string): THREE.CanvasTexture {
   const { c, pix } = makeCanvas(16, 16);
   for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) pix(x, y, skin);
   const eye = '#26262e';

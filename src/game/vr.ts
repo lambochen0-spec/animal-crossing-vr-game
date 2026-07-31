@@ -1398,6 +1398,24 @@ export class SwingDetector {
 
 
 
+// 指向候选：射线命中判定所需的最小数据（池化复用，重建时覆写，不每帧 new）
+
+type PointCand = {
+
+  kind: 'pickup' | 'talk' | 'flower' | 'weed';
+
+  id: string;
+
+  pos: THREE.Vector3;
+
+  mesh?: THREE.Object3D;
+
+  top: number;
+
+  r2: number;
+
+};
+
 // ================= VR 系统主体 =================
 
 
@@ -1728,6 +1746,19 @@ export class VRSystem {
 
   private pointByHand: ({ kind: 'pickup' | 'talk' | 'flower' | 'weed'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number } | null)[] = [null, null];
 
+  // 指向候选缓存：8Hz 重建一次，每帧射线命中判定复用（消除每帧 200+ 临时对象）
+
+  private aimCands: PointCand[] = [];        // 复用候选数组
+
+  private aimPool: PointCand[] = [];         // 候选槽位池（懒增长，重建时覆写复用）
+
+  private aimVecs: THREE.Vector3[] = [];     // 花/草静态坐标 Vector3 池
+
+  private aimRebuildT = 0;                   // 候选重建节流计时（8Hz）
+
+  private aimWin: (PointCand | null)[] = [null, null]; // 每手稳定命中槽位（跨帧只读 kind/id/mesh）
+
+
 
 
 
@@ -1767,6 +1798,7 @@ export class VRSystem {
 
 
   private tmpB = new THREE.Vector3();
+  private tmpM4 = new THREE.Matrix4();
 
 
 
@@ -1998,7 +2030,6 @@ export class VRSystem {
 
 
 
-      r.setPixelRatio(Math.min(0.25, this.savedPixelRatio));
 
 
 
@@ -2201,7 +2232,7 @@ export class VRSystem {
 
 
 
-  private vrHeldId: string | null = null;
+
 
 
 
@@ -2773,7 +2804,7 @@ export class VRSystem {
 
 
 
-    const sel = this.host.getSelectedItem?.();
+    const sel = store.state.selectedItem;
 
 
 
@@ -2805,7 +2836,7 @@ export class VRSystem {
 
 
 
-    this.vrHeldId = item;
+
 
 
 
@@ -3041,7 +3072,6 @@ export class VRSystem {
 
 
 
-  private drAcc = 0; private drN = 0; private drCd = 0; private curPR = 0.5;
 
 
 
@@ -3049,7 +3079,6 @@ export class VRSystem {
 
 
 
-  private lastAvgMs = 0; // 最近平均帧时间（左腕状态页显示用）
 
 
 
@@ -3105,223 +3134,6 @@ export class VRSystem {
 
 
 
-    // 动态分辨率：按"用户移动速度"为主信号（用户体感的延迟来自"画面跟不上运动"，
-
-
-
-
-
-
-
-    // 站着不动时帧率再差也没事，跑动时才需要降像素比防闪烁），帧时间为辅助兜底。
-
-
-
-
-
-
-
-    // 速度档位（march.speed 范围 0~3.8 m/s）：
-
-
-
-
-
-
-
-    //   < 0.3 m/s  几乎不动 → 0.65 满画质
-
-
-
-
-
-
-
-    //   0.3~1.0    慢走     → 0.55
-
-
-
-
-
-
-
-    //   1.0~2.5    快走     → 0.45
-
-
-
-
-
-
-
-    //   > 2.5      跑步     → 0.35
-
-
-
-
-
-
-
-    // 帧时间兜底：avg > 40ms 强制降到 0.3；avg < 14ms 允许小幅回升
-
-
-
-
-
-
-
-    const userSpeed = this.march.speed;
-
-
-
-
-
-
-
-    let targetPR = 0.25;
-
-
-
-
-
-
-
-    if (userSpeed > 2.5) targetPR = 0.3;
-
-
-
-
-
-
-
-    else if (userSpeed > 1.0) targetPR = 0.35;
-
-
-
-
-
-
-
-    else if (userSpeed > 0.3) targetPR = 0.4;
-
-
-
-
-
-
-
-    // 帧时间兜底（每 2 秒采样一次，10 帧平均）
-
-
-
-
-
-
-
-    this.drAcc += dt; this.drN++; this.drCd -= dt;
-
-
-
-
-
-
-
-    if (this.drCd <= 0 && this.drN > 10) {
-
-
-
-
-
-
-
-      const avg = this.drAcc / this.drN;
-
-
-
-
-
-
-
-      this.drAcc = 0; this.drN = 0; this.drCd = 2;
-
-
-
-
-
-
-
-      this.lastAvgMs = avg * 1000;
-
-
-
-
-
-
-
-      if (avg > 0.040) targetPR = Math.min(targetPR, 0.25); // 兜底：50ms 强制降到 0.25
-
-
-
-
-
-
-
-      else if (avg < 0.014) targetPR = Math.min(0.5, targetPR + 0.05); // 帧宽裕小幅回升
-
-
-
-
-
-
-
-    }
-
-
-
-
-
-
-
-    // 阶梯式切换像素比：每帧采样目标值，但只在差超过 0.05 时才更新，避免 setPixelRatio 频繁调用
-
-
-
-
-
-
-
-    // + 非整数像素比造成 GPU texture 重分配抖动
-
-
-
-
-
-
-
-    if (Math.abs(targetPR - this.curPR) > 0.05) {
-
-
-
-
-
-
-
-      this.curPR = targetPR;
-
-
-
-
-
-
-
-      this.host.renderer.setPixelRatio(this.curPR);
-
-
-
-
-
-
-
-    }
 
 
 
@@ -3617,7 +3429,7 @@ export class VRSystem {
 
 
 
-    this.updatePointAim();
+    this.updatePointAim(dt);
 
 
 
@@ -3721,477 +3533,266 @@ export class VRSystem {
 
 
 
-  private updatePointAim() {
-
-
-
-
-
-
+  private updatePointAim(dt: number) {
 
     const blocked = !!(store.state.dialog || store.state.shopOpen || store.state.phoneOpen);
 
+    // 候选列表 8Hz 重建（池化复用，消除每帧 200+ 临时对象）；射线命中判定每帧复用缓存
+    if (blocked) {
 
+      this.aimCands.length = 0;
 
+      this.aimRebuildT = 0;
 
+    } else {
 
+      this.aimRebuildT -= dt;
 
-
-    type Cand = { kind: 'pickup' | 'talk' | 'flower' | 'weed'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number; r2: number };
-
-
-
-
-
-
-
-    let cands: Cand[] = [];
-
-
-
-
-
-
-
-    if (!blocked) {
-
-
-
-
-
-
-
-      cands = this.host.getPickups().map(p => ({ kind: 'pickup' as const, id: String(p.id), pos: p.pos, mesh: p.mesh, top: 0, r2: 0.36 })); // 半径 0.6m
-
-
-
-      for (const f of this.host.getFlowers()) {
-
-        const fy = this.host.groundY(f.x, f.z);
-
-        cands.push({ kind: 'flower', id: String(f.id), pos: new THREE.Vector3(f.x, fy, f.z), top: fy + 0.6, r2: 0.64 });
-
-      }
-
-
-
-      for (const w of this.host.getWeeds()) {
-
-        const wy = this.host.groundY(w.x, w.z);
-
-        cands.push({ kind: 'weed', id: String(w.id), pos: new THREE.Vector3(w.x, wy, w.z), top: wy + 0.3, r2: 0.49 });
-
-      }
-
-
-
-      for (const t of this.host.getTalkTargets()) {
-
-
-
-
-
-
-
-        cands.push({ kind: 'talk', id: t.id, pos: t.pos, top: t.top, r2: 0.81 }); // 角色半径 0.9m
-
-
-
-
-
-
-
-      }
-
-
-
-
-
-
+      if (this.aimRebuildT <= 0) { this.aimRebuildT = 0.125; this.rebuildAimCands(); }
 
     }
 
-
-
-
-
-
-
-    const next: ({ kind: 'pickup' | 'talk' | 'flower' | 'weed'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number } | null)[] = [null, null];
-
-
-
-
-
-
+    const cands = this.aimCands;
 
     for (let hand = 0; hand < 2; hand++) {
-
-
-
-
-
-
 
       const c = this.controllers[hand];
 
-
-
-
-
-
-
-      let best: Cand | null = null;
-
-
-
-
-
-
+      let best: PointCand | null = null;
 
       let bestT = Infinity;
 
-
-
-
-
-
-
       if (c && c.visible) {
-
-
-
-
-
-
 
         const origin = c.getWorldPosition(this.tmpA);
 
-
-
-
-
-
-
         const dir = this.tmpB.set(0, 0, -1).applyQuaternion(c.getWorldQuaternion(this.tmpQ));
 
+        for (let i = 0; i < cands.length; i++) {
 
-
-
-
-
-
-        for (const cd of cands) {
-
-
-
-
-
-
+          const cd = cands[i];
 
           this.tmpV.copy(cd.pos).sub(origin);
 
-
-
-
-
-
-
           const t = this.tmpV.dot(dir);
-
-
-
-
-
-
 
           if (t < 0.3 || t > 8) continue; // 8 米范围内
 
-
-
-
-
-
-
           const perp2 = this.tmpV.lengthSq() - t * t;
-
-
-
-
-
-
 
           if (perp2 < cd.r2 && t < bestT) { bestT = t; best = cd; }
 
-
-
-
-
-
-
         }
-
-
-
-
-
-
 
       }
 
+      // 掉落物高亮切换：旧目标恢复大小，新目标放大提示"指住了"（写入稳定槽位，不每帧分配）
+      const prev = this.pointByHand[hand];
 
+      if (best) {
 
+        if (prev?.kind === 'pickup' && prev.mesh && prev.mesh !== best.mesh) prev.mesh.scale.setScalar(1);
 
+        if (best.kind === 'pickup' && best.mesh) best.mesh.scale.setScalar(1.45);
 
+        let w = this.aimWin[hand];
 
+        if (!w) { w = { kind: 'pickup', id: '', pos: new THREE.Vector3(), top: 0, r2: 0 }; this.aimWin[hand] = w; }
 
-      next[hand] = best;
+        w.kind = best.kind;
 
+        w.id = best.id;
 
+        w.pos = best.pos;
 
+        w.mesh = best.mesh;
 
+        w.top = best.top;
 
+        this.pointByHand[hand] = w;
 
+      } else {
+
+        if (prev?.kind === 'pickup' && prev.mesh) prev.mesh.scale.setScalar(1);
+
+        this.pointByHand[hand] = null;
+
+      }
 
       // 指着时亮出激光并缩放到目标距离，指哪打哪
-
-
-
-
-
-
-
       const laser = this.lasers[hand];
-
-
-
-
-
-
 
       if (laser) {
 
-
-
-
-
-
-
         if (best) {
-
-
-
-
-
-
 
           laser.visible = true;
 
-
-
-
-
-
-
           laser.scale.z = bestT / 3;
-
-
-
-
-
-
 
           laser.position.z = -bestT / 2;
 
-
-
-
-
-
-
         } else if (this.hoverByHand[hand] < 0) {
-
-
-
-
-
-
 
           laser.visible = false;
 
-
-
-
-
-
-
           laser.scale.z = 1;
-
-
-
-
-
-
 
           laser.position.z = -1.5;
 
-
-
-
-
-
-
         }
-
-
-
-
-
-
 
       }
 
-
-
-
-
-
-
       // 指着角色 → 头顶浮 💬 气泡
-
-
-
-
-
-
-
       const sp = this.talkSprites[hand];
-
-
-
-
-
-
 
       if (sp) {
 
-
-
-
-
-
-
         if (best?.kind === 'talk') {
-
-
-
-
-
-
 
           sp.visible = true;
 
-
-
-
-
-
-
           sp.position.set(best.pos.x, best.pos.y + best.top + 0.3, best.pos.z);
-
-
-
-
-
-
 
         } else sp.visible = false;
 
-
-
-
-
-
-
       }
 
+    }
 
+  }
 
+  // 8Hz 重建候选列表：复用池化槽位，不每帧 new Vector3 / String / 包裹对象
+  private rebuildAimCands() {
 
+    const cands = this.aimCands;
 
+    cands.length = 0;
 
+    let ci = 0; // 候选槽位游标
+
+    let vi = 0; // 花/草坐标槽位游标
+
+    const candSlot = (): PointCand => {
+
+      const c = this.aimPool[ci];
+
+      if (!c) { const n = { kind: 'pickup' as const, id: '', pos: new THREE.Vector3(), top: 0, r2: 0 }; this.aimPool[ci] = n; ci++; return n; }
+
+      ci++;
+
+      return c;
+
+    };
+
+    const vecSlot = (): THREE.Vector3 => {
+
+      const v = this.aimVecs[vi];
+
+      if (!v) { const n = new THREE.Vector3(); this.aimVecs[vi] = n; vi++; return n; }
+
+      vi++;
+
+      return v;
+
+    };
+
+    // 掉落物：pos/mesh 直接引用世界对象，命中判定每帧拿到最新位置
+    for (const p of this.host.getPickups()) {
+
+      const c = candSlot();
+
+      c.kind = 'pickup';
+
+      c.id = String(p.id);
+
+      c.pos = p.pos;
+
+      c.mesh = p.mesh;
+
+      c.top = 0;
+
+      c.r2 = 0.36; // 半径 0.6m
+
+      cands.push(c);
 
     }
 
+    // 花：静态坐标写入池化 Vector3（地面高度在重建时计算一次）
+    for (const f of this.host.getFlowers()) {
 
+      const c = candSlot();
 
+      const v = vecSlot();
 
+      const fy = this.host.groundY(f.x, f.z);
 
+      v.set(f.x, fy, f.z);
 
+      c.kind = 'flower';
 
-    // 掉落物高亮切换：旧目标恢复大小，新目标放大提示"指住了"
+      c.id = String(f.id);
 
+      c.pos = v;
 
+      c.mesh = undefined;
 
+      c.top = fy + 0.6;
 
+      c.r2 = 0.64;
 
-
-
-    for (let hand = 0; hand < 2; hand++) {
-
-
-
-
-
-
-
-      const prev = this.pointByHand[hand];
-
-
-
-
-
-
-
-      if (prev?.kind === 'pickup' && prev.mesh && prev.mesh !== next[hand]?.mesh) prev.mesh.scale.setScalar(1);
-
-
-
-
-
-
-
-      const nxt = next[hand];
-
-
-
-
-
-
-
-      if (nxt?.kind === 'pickup' && nxt.mesh) nxt.mesh.scale.setScalar(1.45);
-
-
-
-
-
-
+      cands.push(c);
 
     }
 
+    // 草
+    for (const w of this.host.getWeeds()) {
 
+      const c = candSlot();
 
+      const v = vecSlot();
 
+      const wy = this.host.groundY(w.x, w.z);
 
+      v.set(w.x, wy, w.z);
 
+      c.kind = 'weed';
 
-    this.pointByHand = next;
+      c.id = String(w.id);
 
+      c.pos = v;
 
+      c.mesh = undefined;
 
+      c.top = wy + 0.3;
 
+      c.r2 = 0.49;
 
+      cands.push(c);
 
+    }
+
+    // 对话目标：pos 直接引用角色 group.position，走动时命中判定依然最新
+    for (const t of this.host.getTalkTargets()) {
+
+      const c = candSlot();
+
+      c.kind = 'talk';
+
+      c.id = t.id;
+
+      c.pos = t.pos;
+
+      c.mesh = undefined;
+
+      c.top = t.top;
+
+      c.r2 = 0.81; // 角色半径 0.9m
+
+      cands.push(c);
+
+    }
 
   }
 
@@ -6151,31 +5752,6 @@ export class VRSystem {
 
 
 
-      // 帧时间（调黑边问题用：>14ms 即超帧预算）
-
-
-
-
-
-
-
-      ctx.fillStyle = this.lastAvgMs > 14 ? '#ff9a7a' : '#7fd97f';
-
-
-
-
-
-
-
-      ctx.font = '18px sans-serif';
-
-
-
-
-
-
-
-      ctx.fillText(`⏱ ${this.lastAvgMs.toFixed(0)}ms`, 300, 114);
 
 
 
@@ -8035,7 +7611,7 @@ export class VRSystem {
 
 
 
-    const origin = ctrl.getWorldPosition(new THREE.Vector3());
+    const origin = ctrl.getWorldPosition(this.tmpA);
 
 
 
@@ -8043,7 +7619,7 @@ export class VRSystem {
 
 
 
-    const dir = ctrl.getWorldDirection(new THREE.Vector3()).negate();
+    const dir = ctrl.getWorldDirection(this.tmpB).negate();
 
 
 
@@ -8051,7 +7627,7 @@ export class VRSystem {
 
 
 
-    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(panel.getWorldQuaternion(new THREE.Quaternion()));
+    const normal = this.tmpV.set(0, 0, 1).applyQuaternion(panel.getWorldQuaternion(this.tmpQ));
 
 
 
@@ -8059,7 +7635,7 @@ export class VRSystem {
 
 
 
-    const pw = panel.getWorldPosition(new THREE.Vector3());
+    const pw = panel.getWorldPosition(this.tmpV2);
 
 
 
@@ -8083,7 +7659,7 @@ export class VRSystem {
 
 
 
-    const t = pw.clone().sub(origin).dot(normal) / denom;
+    const t = pw.sub(origin).dot(normal) / denom;
 
 
 
@@ -8115,7 +7691,7 @@ export class VRSystem {
 
 
 
-    const inv = new THREE.Matrix4().copy(panel.matrixWorld).invert();
+    const inv = this.tmpM4.copy(panel.matrixWorld).invert();
 
 
 
@@ -8187,7 +7763,7 @@ export class VRSystem {
 
 
 
-    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(panel.getWorldQuaternion(new THREE.Quaternion()));
+    const normal = this.tmpV.set(0, 0, 1).applyQuaternion(panel.getWorldQuaternion(this.tmpQ));
 
 
 
@@ -8195,7 +7771,7 @@ export class VRSystem {
 
 
 
-    const toEye = this.host.camera.getWorldPosition(new THREE.Vector3()).sub(panel.getWorldPosition(new THREE.Vector3())).normalize();
+    const toEye = this.host.camera.getWorldPosition(this.tmpA).sub(panel.getWorldPosition(this.tmpB)).normalize();
 
 
 
@@ -9223,7 +8799,7 @@ export class VRSystem {
 
 
 
-      const origin = c.getWorldPosition(new THREE.Vector3());
+      const origin = c.getWorldPosition(this.tmpA);
 
 
 
@@ -9239,7 +8815,7 @@ export class VRSystem {
 
 
 
-      const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(panel.quaternion);
+      const normal = this.tmpB.set(0, 0, 1).applyQuaternion(panel.quaternion);
 
 
 
@@ -9287,7 +8863,7 @@ export class VRSystem {
 
 
 
-      const hit = origin.clone().add(dir.clone().multiplyScalar(t));
+      const hit = this.tmpB.copy(origin).addScaledVector(dir, t);
 
 
 
@@ -9295,7 +8871,7 @@ export class VRSystem {
 
 
 
-      const local = panel.worldToLocal(hit.clone());
+      const local = panel.worldToLocal(hit);
 
 
 
