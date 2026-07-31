@@ -4185,6 +4185,8 @@ export class Game {
 
           { label: '💤 直接睡（不存档）', command: 'sleepNoSave' },
 
+          { label: '💾 保存并回到首页', command: 'saveQuit' },
+
           { label: '再躺一会儿', command: 'cancel' },
 
         ]);
@@ -7410,6 +7412,20 @@ export class Game {
           else if (c.command === 'sleepSave') this.goSleep(true);
 
           else if (c.command === 'sleepNoSave') this.goSleep(false);
+
+          else if (c.command === 'saveQuit') {
+
+            this.dialogQueue = [];
+
+            store.patch({ dialog: null });
+
+            this.save();
+
+            this.toast('已保存！', '💾', '正在回到标题画面……');
+
+            void savefile.flushSave().finally(() => setTimeout(() => location.reload(), 600));
+
+          }
 
           else { this.dialogQueue = []; store.patch({ dialog: null }); }
 
