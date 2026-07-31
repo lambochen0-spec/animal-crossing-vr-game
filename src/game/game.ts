@@ -7997,7 +7997,8 @@ export class Game {
 
             sfx.sell();
 
-            store.patch({ shopLine: `买下了${ITEMS[c.item]?.name}！拿在手上对草地按 E 就能种。` });
+            const boughtCat = ITEMS[c.item]?.category;
+            store.patch({ shopLine: `买下了${ITEMS[c.item]?.name}！` + (boughtCat === 'furniture' ? '回家后拿在手上按 E 摆放' : boughtCat === 'use' ? '拿在手上按 E 使用' : '拿在手上对草地按 E 就能种') });
 
           } else {
 

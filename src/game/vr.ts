@@ -1746,6 +1746,7 @@ export class VRSystem {
   private shopKey = '';
   private shopBtnRects: { x: number; y: number; w: number; h: number; command: string }[] = [];
   private shopHoverByHand: number[] = [-1, -1];
+  private shopHitDist: number[] = [-1, -1];   // 每只手射线打到商店面板的距离（-1 = 未指向面板）
 
 
 
@@ -3760,11 +3761,16 @@ export class VRSystem {
 
         } else if (this.hoverByHand[hand] < 0) {
 
-          laser.visible = this.decorT > 0; // 装修模式激光常亮（默认长度）
+          const shopOn = !!(this.shopPanel && this.shopPanel.visible); // 商店 3D 面板打开 → 激光常亮
+          laser.visible = this.decorT > 0 || shopOn; // 装修模式激光常亮（默认长度）
 
-          laser.scale.z = 1;
-
-          laser.position.z = -1.5;
+          if (shopOn && this.shopHitDist[hand] > 0) {
+            laser.scale.z = this.shopHitDist[hand] / 3;
+            laser.position.z = -this.shopHitDist[hand] / 2;
+          } else {
+            laser.scale.z = 1;
+            laser.position.z = -1.5;
+          }
 
         }
 
@@ -9515,6 +9521,7 @@ export class VRSystem {
   // 双手柄射线与商店面板求交 → 命中按钮下标（哪只手指的哪只手确认）
   private updateShopHover() {
     this.shopHoverByHand = [-1, -1];
+    this.shopHitDist = [-1, -1];
     const p = this.shopPanel;
     if (!p || !p.visible) return;
     for (let hand = 0; hand < 2; hand++) {
@@ -9528,6 +9535,7 @@ export class VRSystem {
       if (Math.abs(denom) < 1e-4) continue;
       const t = toPanel.dot(normal) / denom;
       if (t < 0 || t > 6) continue;
+      this.shopHitDist[hand] = t; // 激光按面板距离收尾，tip 落在面板上
       const hit = this.tmpB.copy(origin).addScaledVector(dir, t);
       const local = p.worldToLocal(hit);
       // plane 1.5 x 1.5 → 虚拟画布 1024×1024
