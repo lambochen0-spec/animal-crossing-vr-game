@@ -1734,6 +1734,19 @@ export class VRSystem {
 
   private btnRects: { x: number; y: number; w: number; h: number; command: string }[] = [];
 
+  // ---- DOM Overlay 运行时诊断 ----
+  private diagToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private domOverlayOk = false;   // 本次会话 dom-overlay 是否被浏览器接受（决定 3D 商店面板是否启用）
+
+  // ---- VR 3D 商店面板（Quest 不支持 DOM Overlay 时的备选方案）----
+  private shopPanel: THREE.Group | null = null;
+  private shopCtx!: CanvasRenderingContext2D;
+  private shopTex!: THREE.CanvasTexture;
+  private shopKey = '';
+  private shopBtnRects: { x: number; y: number; w: number; h: number; command: string }[] = [];
+  private shopHoverByHand: number[] = [-1, -1];
+
 
 
 
@@ -2002,6 +2015,32 @@ export class VRSystem {
       if (overlayRoot) sessionInit.domOverlay = { root: overlayRoot };
       const session = await xr.requestSession('immersive-vr', sessionInit);
 
+      // ---- WebXR DOM Overlay 运行时诊断（必须）----
+      // requestSession 返回后立刻判定浏览器是否真的接受了 dom-overlay（optionalFeatures 不保证启用）。
+      // domOverlayState 定义见 WebXR DOM Overlays 规范：type ∈ 'screen' | 'floating' | 'head-locked'。
+      // Quest 的 immersive-vr 会话可能静默忽略该 feature → domOverlayState 为 undefined。
+      const domOverlayState = session.domOverlayState;
+      this.domOverlayOk = !!domOverlayState;   // 3D 商店面板只在 dom-overlay 失效时启用（避免双 UI）
+      const cssIssue = this.checkDomOverlayAncestors(overlayRoot);
+      console.info('[VR] DOM Overlay 诊断', {
+        overlayRootFound: !!overlayRoot,
+        domOverlayRequested: !!overlayRoot,
+        domOverlayState,
+        cssIssue,
+      });
+      // 延后展示 toast：避免被 host.onVRStart() 的「VR 模式」提示（1.5s 后清空）立即覆盖
+      setTimeout(() => {
+        if (!overlayRoot) {
+          this.diagToast('⚠️ DOM Overlay 未启用', '🥽', '未找到 #xr-dom-overlay 元素，sessionInit 未携带 domOverlay');
+        } else if (cssIssue) {
+          this.diagToast('⚠️ DOM Overlay 祖先链异常', '🥽', `${cssIssue} 含合成属性（transform/opacity/filter…），头显内可能不显示 DOM`);
+        } else if (domOverlayState) {
+          this.diagToast('✅ DOM Overlay 已启用', '🟢', `会话已接受 dom-overlay（type=${domOverlayState.type}），DOM 面板应在头显内可见`, 3500);
+        } else {
+          this.diagToast('⚠️ DOM Overlay 未启用', '🥽', 'Quest 可能需开启 WebXR Experiments flag，或改用 3D 面板方案');
+        }
+      }, 1800);
+
 
 
 
@@ -2215,6 +2254,42 @@ export class VRSystem {
 
 
   exit() { void this.session?.end(); }
+
+  // DOM Overlay 规范（immersive-web.github.io/dom-overlays）：overlay root 自身及其祖先若带
+  // transform/opacity/filter/backdrop-filter/mix-blend-mode 等合成属性，祖先的 stacking context
+  // 不会绘制到头显（UA 样式表只对 overlay 元素本身强制 transform:none），面板可能显示异常。
+  // 返回问题链描述（root → html 逐级检查），无问题返回 null。
+  private checkDomOverlayAncestors(root: Element | null): string | null {
+    if (!root) return null;
+    const props: [string, (cs: CSSStyleDeclaration) => string][] = [
+      ['transform', cs => cs.transform],
+      ['opacity', cs => cs.opacity],
+      ['filter', cs => cs.filter],
+      ['backdrop-filter', cs => cs.backdropFilter],
+      ['mix-blend-mode', cs => cs.mixBlendMode],
+    ];
+    const issues: string[] = [];
+    let el: Element | null = root;
+    while (el) {
+      const cs = window.getComputedStyle(el);
+      const bad = props.filter(([, get]) => {
+        const v = get(cs).trim();
+        return v !== '' && v !== 'none' && v !== '1' && v !== 'normal';
+      }).map(([name]) => name);
+      if (bad.length) issues.push(`${el.id ? '#' + el.id : el.tagName.toLowerCase()}[${bad.join(', ')}]`);
+      el = el.parentElement;
+    }
+    return issues.length ? issues.join(' → ') : null;
+  }
+
+  // 诊断 toast：比 game.toast（1.5s）更久，保证用户在头显内有时间读完
+  private diagToast(title: string, icon: string, desc: string, ms = 6000) {
+    store.patch({ toast: { title, icon, desc } });
+    if (this.diagToastTimer) clearTimeout(this.diagToastTimer);
+    this.diagToastTimer = setTimeout(() => {
+      if (store.state.toast?.title === title) store.patch({ toast: null });
+    }, ms);
+  }
 
 
 
@@ -2967,6 +3042,8 @@ export class VRSystem {
 
     if (this.dialogPanel) { scene.remove(this.dialogPanel); this.dialogPanel = null; }
 
+    if (this.shopPanel) { scene.remove(this.shopPanel); this.shopPanel = null; }
+
 
 
 
@@ -3455,6 +3532,10 @@ export class VRSystem {
 
 
     this.updateDialogPanel(viewYaw, dt);
+
+    // VR 3D 商店面板（dom-overlay 失效时的备选方案）
+
+    this.updateShopPanel(viewYaw, dt);
 
 
 
@@ -4929,6 +5010,32 @@ export class VRSystem {
 
 
     this.pulse(hand, 0.3, 40);
+
+    // VR 3D 商店面板：激光指向按钮扣扳机 → 直接 push 商店命令
+
+    if (store.state.shopOpen && !this.domOverlayOk) {
+
+      const idx = this.shopHoverByHand[hand];
+
+      if (idx >= 0 && this.shopBtnRects[idx]) {
+
+        const [cmd, a1, a2] = this.shopBtnRects[idx].command.split(':');
+
+        if (cmd === 'buy') commands.push({ type: 'buy', item: a1, price: Number(a2) });
+
+        else if (cmd === 'sell') commands.push({ type: 'sell', item: a1 });
+
+        else if (cmd === 'sellAll') commands.push({ type: 'sellAll' });
+
+        else if (cmd === 'closeShop') commands.push({ type: 'closeShop' });
+
+        this.pulse(hand, 0.5, 60);
+
+      }
+
+      return;
+
+    }
 
 
 
@@ -9357,6 +9464,230 @@ export class VRSystem {
 
 
 
+  // ---------------- VR 3D 商店面板（drawShop）----------------
+  // DOM Overlay 在 Quest 的 immersive-vr 会话大概率不生效 → 商店面板改用 3D canvas 渲染。
+  // 复用 btnRects / raycastPanel / onSelect 机制，点按钮直接 push 已有的 buy/sell/sellAll/closeShop 命令。
+
+  private ensureShopPanel() {
+    if (this.shopPanel) return;
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 512;
+    this.shopCtx = c.getContext('2d')!;
+    this.shopTex = new THREE.CanvasTexture(c);
+    const g = new THREE.Group();
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.5, 1.5),
+      new THREE.MeshBasicMaterial({ map: this.shopTex, transparent: true, depthTest: false }),
+    );
+    m.renderOrder = 998;
+    g.add(m);
+    this.shopPanel = g;
+    this.host.scene.add(g);
+  }
+
+  private updateShopPanel(viewYaw: number, dt: number) {
+    const s = store.state;
+    if (!s.shopOpen || this.domOverlayOk) {
+      if (this.shopPanel) this.shopPanel.visible = false;
+      this.shopKey = '';
+      this.shopHoverByHand = [-1, -1];
+      return;
+    }
+    this.ensureShopPanel();
+    const p = this.shopPanel!;
+    p.visible = true;
+
+    // 面板放在玩家前方 2m、视线略下方，缓慢跟随视线（与对话面板一致）
+    const { playerPos, camera } = this.host;
+    const eyeY = playerPos.y + (camera.position.y || 1.5);
+    const tx = playerPos.x - Math.sin(viewYaw) * 2.0;
+    const tz = playerPos.z - Math.cos(viewYaw) * 2.0;
+    p.position.x += (tx - p.position.x) * Math.min(1, dt * 4);
+    p.position.y += (eyeY - 0.65 - p.position.y) * Math.min(1, dt * 4);
+    p.position.z += (tz - p.position.z) * Math.min(1, dt * 4);
+    p.rotation.y = Math.atan2(playerPos.x - p.position.x, playerPos.z - p.position.z);
+
+    this.updateShopHover();
+    const key = JSON.stringify([s.shopLine, s.bells, s.hotDeal, s.shopGoods, s.inventory]) + JSON.stringify(this.shopHoverByHand);
+    if (key !== this.shopKey) { this.shopKey = key; this.drawShop(); }
+  }
+
+  // 双手柄射线与商店面板求交 → 命中按钮下标（哪只手指的哪只手确认）
+  private updateShopHover() {
+    this.shopHoverByHand = [-1, -1];
+    const p = this.shopPanel;
+    if (!p || !p.visible) return;
+    for (let hand = 0; hand < 2; hand++) {
+      const c = this.controllers[hand];
+      if (!c) continue;
+      const origin = c.getWorldPosition(this.tmpA);
+      const dir = c.getWorldDirection(this.tmpV2).negate(); // 手柄朝向前方为 -z
+      const normal = this.tmpB.set(0, 0, 1).applyQuaternion(p.quaternion);
+      const toPanel = this.tmpV.copy(p.position).sub(origin);
+      const denom = dir.dot(normal);
+      if (Math.abs(denom) < 1e-4) continue;
+      const t = toPanel.dot(normal) / denom;
+      if (t < 0 || t > 6) continue;
+      const hit = this.tmpB.copy(origin).addScaledVector(dir, t);
+      const local = p.worldToLocal(hit);
+      // plane 1.5 x 1.5 → 虚拟画布 1024×1024
+      const u = (local.x / 1.5 + 0.5) * 1024;
+      const v = (0.5 - local.y / 1.5) * 1024;
+      this.shopBtnRects.forEach((b, i) => {
+        if (u >= b.x && u <= b.x + b.w && v >= b.y && v <= b.y + b.h && this.shopHoverByHand[hand] < 0) {
+          this.shopHoverByHand[hand] = i;
+        }
+      });
+    }
+  }
+
+  // 绘制商店面板（虚拟 1024×1024，ctx.scale(0.5)）：标题/关闭 + 高价横幅 + 今日商品 2 列 + 背包出售 4 列
+  private drawShop() {
+    const s = store.state;
+    const ctx = this.shopCtx;
+    ctx.save();
+    ctx.scale(0.5, 0.5);
+    ctx.clearRect(0, 0, 1024, 1024);
+
+    // 背景
+    ctx.fillStyle = 'rgba(255,250,238,0.97)';
+    ctx.beginPath();
+    ctx.roundRect(0, 0, 1024, 1024, 28);
+    ctx.fill();
+    ctx.strokeStyle = '#d9b98a';
+    ctx.lineWidth = 6;
+    ctx.stroke();
+
+    this.shopBtnRects = [];
+
+    // 标题行 + 铃钱 + 关闭按钮
+    ctx.fillStyle = '#a87f4e';
+    ctx.font = 'bold 44px sans-serif';
+    ctx.fillText('⚡ 友好商店', 40, 66);
+    ctx.fillStyle = '#7a6a52';
+    ctx.font = '26px sans-serif';
+    ctx.fillText(s.shopLine, 40, 108);
+    ctx.fillStyle = '#b8860b';
+    ctx.font = 'bold 32px sans-serif';
+    ctx.fillText(`💰 ${s.bells} 金币`, 720, 66);
+    ctx.fillStyle = '#f2a65a';
+    ctx.beginPath();
+    ctx.roundRect(948, 28, 52, 52, 26);
+    ctx.fill();
+    ctx.fillStyle = '#4a3a28';
+    ctx.font = 'bold 36px sans-serif';
+    ctx.fillText('✕', 963, 67);
+    this.shopBtnRects.push({ x: 948, y: 28, w: 52, h: 52, command: 'closeShop' });
+
+    // 今日高价收购横幅
+    let goodsY = 168;
+    if (s.hotDeal) {
+      ctx.fillStyle = '#fdeaea';
+      ctx.beginPath();
+      ctx.roundRect(40, 130, 944, 52, 12);
+      ctx.fill();
+      ctx.fillStyle = '#c0392b';
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText(`🔥 今日高价收购：${s.hotDeal.icon} ${s.hotDeal.label}（1.5 倍）`, 60, 164);
+      goodsY = 210;
+    }
+
+    // 今日商品（2 列网格）
+    ctx.fillStyle = '#5a4632';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText('🛒 今日商品', 40, goodsY + 8);
+    const goodsTop = goodsY + 28;
+    s.shopGoods.forEach((g, i) => {
+      const col = i % 2, row = Math.floor(i / 2);
+      const bx = 40 + col * 492, by = goodsTop + row * 104;
+      const idx = this.shopBtnRects.length;
+      const hover = this.shopHoverByHand.some(h => h === idx);
+      ctx.fillStyle = hover ? '#d8f0d8' : '#ffffff';
+      ctx.beginPath();
+      ctx.roundRect(bx, by, 472, 88, 16);
+      ctx.fill();
+      ctx.strokeStyle = '#a7d7a7';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.fillStyle = '#4a3a28';
+      ctx.font = '42px sans-serif';
+      ctx.fillText(ITEMS[g.id]?.icon ?? g.icon, bx + 22, by + 60);
+      ctx.font = 'bold 28px sans-serif';
+      ctx.fillText(ITEMS[g.id]?.name ?? g.name, bx + 92, by + 42);
+      ctx.fillStyle = '#b8860b';
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText(`${g.price} 金币`, bx + 92, by + 74);
+      this.shopBtnRects.push({ x: bx, y: by, w: 472, h: 88, command: `buy:${g.id}:${g.price}` });
+    });
+
+    // 出售（背包）：可卖物品 4 列网格，最多显示 8 种（MVP）
+    const priceOf = (id: string) => {
+      const base = ITEMS[id]?.price ?? 0;
+      return s.hotDeal && ITEMS[id]?.category === s.hotDeal.cat ? Math.round(base * 1.5) : base;
+    };
+    const sellable = Object.entries(s.inventory).filter(([id]) => (ITEMS[id]?.price ?? 0) > 0).slice(0, 8);
+    const totalValue = sellable.reduce((sum, [id, n]) => sum + priceOf(id) * n, 0);
+
+    const sellHeadY = goodsTop + Math.ceil(s.shopGoods.length / 2) * 104 + 20;
+    ctx.fillStyle = '#5a4632';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText('💰 出售（背包）', 40, sellHeadY);
+    const allIdx = this.shopBtnRects.length;
+    const allHover = this.shopHoverByHand.some(h => h === allIdx);
+    ctx.fillStyle = allHover ? '#e8a13a' : '#f2b45c';
+    ctx.beginPath();
+    ctx.roundRect(700, sellHeadY - 34, 284, 48, 24);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 26px sans-serif';
+    ctx.fillText(`全部卖出 +${totalValue}`, 724, sellHeadY - 2);
+    this.shopBtnRects.push({ x: 700, y: sellHeadY - 34, w: 284, h: 48, command: 'sellAll' });
+
+    const bagTop = sellHeadY + 26;
+    if (!sellable.length) {
+      ctx.fillStyle = '#a89880';
+      ctx.font = '26px sans-serif';
+      ctx.fillText('背包空空如也……去摘果子、钓鱼、抓虫吧！', 40, bagTop + 40);
+    } else {
+      sellable.forEach(([id, n], i) => {
+        const col = i % 4, row = Math.floor(i / 4);
+        const bx = 40 + col * 244, by = bagTop + row * 96;
+        const idx = this.shopBtnRects.length;
+        const hover = this.shopHoverByHand.some(h => h === idx);
+        ctx.fillStyle = hover ? '#fdeed2' : '#ffffff';
+        ctx.beginPath();
+        ctx.roundRect(bx, by, 228, 82, 14);
+        ctx.fill();
+        ctx.strokeStyle = '#e5d5b5';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        ctx.fillStyle = '#4a3a28';
+        ctx.font = '34px sans-serif';
+        ctx.fillText(ITEMS[id]?.icon ?? '❔', bx + 14, by + 50);
+        ctx.font = 'bold 24px sans-serif';
+        const hot = s.hotDeal && ITEMS[id]?.category === s.hotDeal.cat;
+        ctx.fillText(`${ITEMS[id]?.name ?? id} ×${n}${hot ? ' 🔥' : ''}`, bx + 62, by + 36);
+        ctx.fillStyle = '#b8860b';
+        ctx.font = '22px sans-serif';
+        ctx.fillText(`${priceOf(id) * n} 金币`, bx + 62, by + 66);
+        this.shopBtnRects.push({ x: bx, y: by, w: 228, h: 82, command: `sell:${id}` });
+      });
+      if (Object.entries(s.inventory).filter(([id]) => (ITEMS[id]?.price ?? 0) > 0).length > 8) {
+        ctx.fillStyle = '#a89880';
+        ctx.font = '24px sans-serif';
+        ctx.fillText('可卖物品较多，VR 里只显示前 8 种（回桌面可卖全部）', 40, bagTop + 96 * 2 + 34);
+      }
+    }
+
+    // 底部提示
+    ctx.fillStyle = '#a89880';
+    ctx.font = '24px sans-serif';
+    ctx.fillText('激光指向商品后扣扳机：购买 / 卖出；右上 ✕ 关闭商店', 40, 980);
+
+    this.shopTex.needsUpdate = true;
+    ctx.restore();
+  }
+
   // 双手柄激光射线与对话面板求交 → 命中按钮高亮（哪只手指的哪只手确认）
 
 
@@ -9397,7 +9728,7 @@ export class VRSystem {
 
 
 
-    const showLaser = this.decorT > 0 || !!(panel && panel.visible && this.btnRects.length > 0); // 装修模式激光常亮
+    const showLaser = this.decorT > 0 || !!(panel && panel.visible && this.btnRects.length > 0) || !!(this.shopPanel && this.shopPanel.visible); // 装修模式激光常亮；商店面板同样显示激光
 
 
 
