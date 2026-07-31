@@ -4,6 +4,7 @@ import { buildFurniture } from './interiors';
 import type { FurnitureItem } from './villagers/types';
 import type { ShopGood } from './shopgoods';
 import { SETS } from './series';
+import * as glbmodels from './glbmodels';
 
 // 系列贴图缓存：系列 id → 家具表面 CanvasTexture
 const setTexCache = new Map<string, THREE.CanvasTexture>();
@@ -13,12 +14,15 @@ function setTexture(setId: string): THREE.CanvasTexture | null {
   const hit = setTexCache.get(setId);
   if (hit) return hit;
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 64;
+  canvas.width = canvas.height = 128;
   const ctx = canvas.getContext('2d')!;
   ctx.fillStyle = def.c1; ctx.fillRect(0, 0, 128, 128); // 解码前先铺主色
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(2, 2);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
   const img = new Image();
   img.onload = () => { ctx.drawImage(img, 0, 0, 128, 128); tex.needsUpdate = true; };
   img.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(def.patSvg);
@@ -188,6 +192,9 @@ function buildSmall(shape: string, c1: string, c2: string): THREE.Group | null {
 
 // 商品 → 3D 模型（自然尺寸，未缩放；系列商品会贴上对应风格的 SVG 贴图）
 export function modelForGood(good: ShopGood): THREE.Group {
+  // 外部 GLB 模型优先（料理等第一批物品）：适配摆放台后直接返回
+  const ext = glbmodels.getModel(good.id);
+  if (ext) { fitToStand(ext); return ext; }
   const kind = KIND_MAP[good.shape];
   if (kind) {
     const { g } = buildFurniture({ kind, x: 0, z: 0, color: good.c1, color2: good.c2 });

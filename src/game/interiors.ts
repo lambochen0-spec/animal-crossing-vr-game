@@ -15,6 +15,8 @@ function svgTexture(svg: string, repeatX: number, repeatY: number): THREE.Canvas
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(repeatX, repeatY);
   tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
   const img = new Image();
   img.onload = () => { ctx.drawImage(img, 0, 0, 256, 256); tex.needsUpdate = true; };
   img.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);

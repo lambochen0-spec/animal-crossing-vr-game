@@ -22,6 +22,8 @@ import { floorChecker, wallStripes } from './villagers/svg';
 
 import { modelForGood, fitToStand, footprint } from './itemmodels';
 
+import * as glbmodels from './glbmodels';
+
 import type { InteriorStyle, FurnitureItem } from './villagers';
 
 import { dailyGoods, GOOD_BY_ID } from './shopgoods';
@@ -169,6 +171,10 @@ export class Game {
   private camYaw = Math.PI;
 
   private camPitch = 0.62;
+
+  private decorActive = false; // VR 装修模式激活（迷你房间沙盘）
+
+  private decorLightPrev: { light: THREE.Object3D; vis: boolean }[] = []; // 装修期间被隐藏的室内灯光原可见性
 
   private dragging = false;
 
@@ -450,19 +456,19 @@ export class Game {
 
     this.scene.add(this.sun.target);
 
-    this.ambient = new THREE.AmbientLight(0xffffff, 0.55);
+    this.ambient = new THREE.AmbientLight(0xffffff, 0.42);
 
     this.scene.add(this.ambient);
 
     // 主角随身补光：平行光均匀照亮周围（没有光点/光斑）
 
-    this.playerGlow = new THREE.DirectionalLight(0xffe8c0, 0);
+    this.playerGlow = new THREE.DirectionalLight(0xffe8c0, 0.2);
 
     this.scene.add(this.playerGlow);
 
     this.scene.add(this.playerGlow.target);
 
-    this.hemi = new THREE.HemisphereLight(0xbfe3ff, 0x6a8f5a, 0.5);
+    this.hemi = new THREE.HemisphereLight(0xbfe3ff, 0x6a8f5a, 0.68);
 
     this.scene.add(this.hemi);
 
@@ -487,6 +493,8 @@ export class Game {
     // 世界
 
     this.world = new World();
+
+    void glbmodels.preloadAll(); // 预加载外部 GLB 模型（不 await，不阻塞启动）
 
     this.world.buildPier();
 
@@ -863,6 +871,156 @@ export class Game {
       onVRStart: () => { this.player.group.visible = false; this.world.vrMode = true; this.toast('VR 模式', '🥽', '原地踏步前进，挥动手柄使用工具，左腕看任务，右腕是手机'); },
 
       onVREnd: () => { this.player.group.visible = true; this.world.vrMode = false; },
+
+      // ---- VR 装修模式（房间沙盘）：阶段一数据层，vr.ts 阶段二按此调用 ----
+
+      getPlacedMini: () => {
+
+        // placedGroup 子节点 + 占地半径（真实房间坐标，vr 侧会乘缩放系数做激光命中）
+
+        const out: { mesh: THREE.Object3D; r: number; idx: number }[] = [];
+
+        this.placedGroup.children.forEach((mesh, idx) => {
+
+          const pf = this.placedFurniture[idx];
+
+          const good = pf ? GOOD_BY_ID[pf.id] : undefined;
+
+          const r = good?.shape === 'rug' ? 0 : footprint(mesh as THREE.Group); // 地毯可踩无碰撞，r=0
+
+          out.push({ mesh, r, idx });
+
+        });
+
+        return out;
+
+      },
+
+      onDecorEnter: () => {
+
+        // 进入装修：激活标记、隐藏屋内村民、隐藏迷你房间灯光（记录原可见性防过曝）
+
+        this.decorActive = true;
+
+        if (this.insideVillager) this.insideVillager.group.visible = false;
+
+        this.decorLightPrev = [];
+
+        this.interior.group.traverse(obj => {
+
+          if ((obj as THREE.Light).isLight) {
+
+            this.decorLightPrev.push({ light: obj, vis: obj.visible });
+
+            obj.visible = false;
+
+          }
+
+        });
+
+      },
+
+      onDecorExit: () => {
+
+        // 退出装修：复位标记、按记录还原灯光、恢复村民、钳制玩家回房间、保存
+
+        this.decorActive = false;
+
+        for (const rec of this.decorLightPrev) rec.light.visible = rec.vis;
+
+        this.decorLightPrev = [];
+
+        this.interior.group.traverse(obj => { if ((obj as THREE.Light).isLight) obj.visible = true; }); // 重建产生的新灯光默认可见
+
+        if (this.insideVillager) this.insideVillager.group.visible = true;
+
+        const p = this.playerPos;
+
+        p.x = Math.max(-(ROOM_W / 2 - 0.9), Math.min(ROOM_W / 2 - 0.9, p.x));
+
+        p.z = Math.max(-(ROOM_D / 2 - 0.9), Math.min(ROOM_D / 2 - 0.7, p.z));
+
+        this.player.group.position.copy(p);
+
+        this.save();
+
+        this.syncHud();
+
+      },
+
+      onDecorAdd: (id, x, z) => {
+
+        // 添加家具：扣库存 + 写入 placedFurniture + 重建 + 保存（坐标 = 真实房间坐标）
+
+        if (!GOOD_BY_ID[id]) return;
+
+        this.removeItem(id, 1);
+
+        this.placedFurniture.push({ id, x, z });
+
+        this.rebuildInterior();
+
+        this.save();
+
+        this.syncHud();
+
+      },
+
+      onDecorMove: (idx, x, z, rotY) => {
+
+        // 移动/旋转：改写 placedFurniture[idx] + 重建 + 保存（不扣库存）
+
+        const pf = this.placedFurniture[idx];
+
+        if (!pf) return;
+
+        pf.x = x; pf.z = z; pf.rotY = rotY;
+
+        this.rebuildInterior();
+
+        this.save();
+
+        this.syncHud();
+
+      },
+
+      onDecorRemove: (idx) => {
+
+        // 移除：splice 收回 + 加回背包 + 重建 + 保存（复用『placed』收回语义）
+
+        const pf = this.placedFurniture[idx];
+
+        if (!pf) return;
+
+        this.placedFurniture.splice(idx, 1);
+
+        this.addItem(pf.id, 1);
+
+        sfx.pickup();
+
+        this.rebuildInterior();
+
+        this.save();
+
+        this.syncHud();
+
+      },
+
+      getInteriorGroup: () => this.interior.group,
+      getInside: () => this.inside,
+      onDecorSet: (kind, setId) => {
+
+        // 换墙纸/地板：只写 homeDecor + 重建 + 保存（库存消耗由 vr 侧 UI 决定）
+
+        this.homeDecor[kind] = setId;
+
+        this.rebuildInterior();
+
+        this.save();
+
+        this.syncHud();
+
+      },
 
       touch: touchInput,
 
@@ -3396,6 +3554,8 @@ export class Game {
   // ---------------- 交互 ----------------
 
   private findInteract(): Interactable | null {
+
+    if (this.decorActive) return null; // 装修沙盘期间：普通交互（收回/睡觉/出门等）全部屏蔽，激光只应命中迷你家具（VR 侧）
 
     const p = this.playerPos;
 
@@ -6613,7 +6773,7 @@ export class Game {
 
     this.updateRain(dt);
 
-    this.playerGlow.intensity = this.vrSys.active ? 0 : (isNight && !this.inside ? 0.6 : 0); // VR 关随光
+    this.playerGlow.intensity = this.vrSys.active ? 0 : (isNight && !this.inside ? 0.6 : 0.2); // VR 关随光，白天/室内 0.2 微弱轮廓光
 
     // 平行光从斜上方均匀洒下，跟着玩家移动，不产生光斑
 
@@ -6703,7 +6863,7 @@ export class Game {
 
       model.position.set(pf.x, 0, pf.z);
 
-      model.rotation.y = (pf.x * 7 + pf.z * 13) % 2 ? Math.PI : 0; // 朝向略有变化
+      model.rotation.y = pf.rotY ?? ((pf.x * 7 + pf.z * 13) % 2 ? Math.PI : 0); // 有指定朝向用指定值，否则随机朝向
 
       this.placedGroup.add(model);
 
@@ -6714,6 +6874,24 @@ export class Game {
     }
 
     this.interior.group.add(this.placedGroup);
+
+  }
+
+
+
+  // 重建家中内装：build + 摆放家具成对调用（避免 colliders 累积）；装修迷你房间期间保持灯光隐藏
+
+  private rebuildInterior() {
+
+    this.interior.build(this.playerHomeStyle(), '你的家');
+
+    this.renderPlacedFurniture();
+
+    if (this.decorActive) {
+
+      this.interior.group.traverse(obj => { if ((obj as THREE.Light).isLight) obj.visible = false; });
+
+    }
 
   }
 
@@ -6800,6 +6978,10 @@ export class Game {
 
 
   private enterInterior(houseName: string) {
+
+    this.decorActive = false; // 进屋复位装修状态（防残留，装修仅在 VR 屋内进行）
+
+    this.decorLightPrev = [];
 
     const isPlayerHome = houseName === '你的家';
 
@@ -7002,6 +7184,10 @@ export class Game {
   private exitInterior() {
 
     sfx.ui();
+
+    this.decorActive = false; // 出屋复位装修状态（避免残留）
+
+    this.decorLightPrev = [];
 
     const houseName = this.inside;
 
@@ -7696,7 +7882,7 @@ export class Game {
 
       const len0 = Math.hypot(ix, iz);
 
-      const uiBlocked0 = store.state.shopOpen || !!store.state.dialog || store.state.phoneOpen;
+      const uiBlocked0 = store.state.shopOpen || !!store.state.dialog || store.state.phoneOpen || this.decorActive;
 
       const moving0 = len0 > 0.15 && !uiBlocked0;
 
@@ -7772,7 +7958,7 @@ export class Game {
 
     const moving = len > 0.15;
 
-    const uiBlocked = store.state.shopOpen || !!store.state.dialog || store.state.phoneOpen;
+    const uiBlocked = store.state.shopOpen || !!store.state.dialog || store.state.phoneOpen || this.decorActive;
 
 
 
@@ -8726,9 +8912,9 @@ export class Game {
 
       this.sun.color.set(isNight ? 0x8fa8ff : 0xfff4e0);
 
-      this.ambient.intensity = isNight ? 0.32 : 0.55;
+      this.ambient.intensity = isNight ? 0.32 : 0.42;
 
-      this.hemi.intensity = isNight ? 0.2 : this.weather === 'rain' ? 0.38 : 0.5;
+      this.hemi.intensity = isNight ? 0.2 : this.weather === 'rain' ? 0.38 : 0.68;
 
     }
 

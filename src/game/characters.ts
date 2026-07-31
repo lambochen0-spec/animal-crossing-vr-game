@@ -1,7 +1,7 @@
 // 动森风格角色：大头 Q 版比例，多块小盒拼出圆润轮廓，全物种耳朵/吻部/尾巴
 import * as THREE from 'three';
 import { faceTexture } from './textures';
-import { makePokeBall, makeFruitDrop } from './items3d';
+import { makePokeBall, makeFruitDrop, makeItemDrop } from './items3d';
 import type { VillagerDef } from './data';
 import { NPC_PROFILES } from './villagers';
 
@@ -543,7 +543,10 @@ export class Character {
     this.heldItem.clear();
     if (!item) { this.heldItem.visible = false; return; }
     const isFruit = item === 'apple' || item === 'cherry' || item === 'orange' || item === 'peach';
-    this.heldItem.add(isFruit ? makeFruitDrop(item, 0.9) : makePokeBall(0.85));
+    const isFish = item === 'crucian' || item === 'carp' || item === 'bass' || item === 'koi';
+    if (isFruit) this.heldItem.add(makeFruitDrop(item, 0.9));
+    else if (isFish) this.heldItem.add(makeItemDrop(item, 0.85)); // 鱼拿外部 GLB 模型（未加载时 fallback 精灵球）
+    else this.heldItem.add(makePokeBall(0.85));
     this.heldItem.visible = true;
   }
 

@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { terrainAtlas, ATLAS, remapBoxUV, waterTexture, leafTexture, trunkTexture, flowerSvgTexture, rockTexture, digSpotTexture, roofTexture, wallTexture, tentSvgTexture } from './textures';
-import { makePokeBall, makeFruitDrop } from './items3d';
+import { makePokeBall, makeFruitDrop, makeItemDrop } from './items3d';
 import { FRUIT_IDS, FLOWER_IDS, BUG_DEFS, FISH_DEFS, weightedPick } from './data';
 import { VILLAGER_PROFILES } from './villagers';
 
@@ -1798,6 +1798,8 @@ export class World {
         g.add(emojiSprite('💰', 1.3));
       } else if (item === 'apple' || item === 'cherry' || item === 'orange' || item === 'peach') {
         g.add(makeFruitDrop(item, 1.15)); // 树果掉落保持水果形态
+      } else if (item === 'crucian' || item === 'carp' || item === 'bass' || item === 'koi') {
+        g.add(makeItemDrop(item, 1.15)); // 鱼掉落外部 GLB 模型（未加载时 fallback 精灵球）
       } else {
         // 其他物品（摆件/材料/生物等）掉落形态：精灵球（对应原版动森的"叶子"）
         const ball = makePokeBall(1.15);

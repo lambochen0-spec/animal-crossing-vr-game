@@ -46,7 +46,9 @@ import { ITEMS } from './data';
 
 
 
-import { makeFruitDrop, makePokeBall } from './items3d';
+import { makeFruitDrop, makePokeBall, makeItemDrop } from './items3d';
+import { GOOD_BY_ID } from './shopgoods';
+import { modelForGood } from './itemmodels';
 
 
 
@@ -248,13 +250,28 @@ export interface VRHost {
 
   getMapMarkers(): { name: string; x: number; z: number; color: string }[]; // 宝可梦实时位置（手机地图页）
 
+  // ---- VR 装修模式（房间沙盘）：阶段一在 game.ts 实现数据层，阶段二 vr.ts 交互层按此调用 ----
 
+  getPlacedMini(): { mesh: THREE.Object3D; r: number; idx: number }[];   // 迷你房间内已摆放家具（真实房间坐标半径）
 
+  onDecorEnter(): void;                                                    // 进入装修（隐藏村民/灯光，置 decorActive）
 
+  onDecorExit(): void;                                                     // 退出装修（恢复 + 钳制玩家回房间 + 保存）
 
+  onDecorAdd(id: string, x: number, z: number): void;                      // 添加家具（扣库存 + 重建 + 保存）
 
+  onDecorMove(idx: number, x: number, z: number, rotY: number): void;      // 移动/旋转（不扣库存 + 重建 + 保存）
+
+  onDecorRemove(idx: number): void;                                        // 移除（收回背包 + 重建 + 保存）
+
+  onDecorSet(kind: 'wall' | 'floor', setId: string): void;                 // 换墙纸/地板（只写 homeDecor + 重建 + 保存）
+  getInteriorGroup(): THREE.Group | null;      // 当前室内 group（迷你房间缩放对象）
+  getInside(): string | null;                  // 当前所在室内名（'你的家'/'你的帐篷'/…，室外 null）
 
 }
+
+
+
 
 
 
@@ -1402,7 +1419,7 @@ export class SwingDetector {
 
 type PointCand = {
 
-  kind: 'pickup' | 'talk' | 'flower' | 'weed';
+  kind: 'pickup' | 'talk' | 'flower' | 'weed' | 'decor';
 
   id: string;
 
@@ -1411,6 +1428,7 @@ type PointCand = {
   mesh?: THREE.Object3D;
 
   top: number;
+  idx?: number;                 // decor 候选：placedFurniture 下标
 
   r2: number;
 
@@ -1592,7 +1610,7 @@ export class VRSystem {
 
 
 
-  private phoneTab: 'map' | 'bag' | 'tool' = 'map';
+  private phoneTab: 'map' | 'bag' | 'tool' | 'decor' = 'map';
 
 
 
@@ -1744,7 +1762,7 @@ export class VRSystem {
 
 
 
-  private pointByHand: ({ kind: 'pickup' | 'talk' | 'flower' | 'weed'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number } | null)[] = [null, null];
+  private pointByHand: ({ kind: 'pickup' | 'talk' | 'flower' | 'weed' | 'decor'; id: string; pos: THREE.Vector3; mesh?: THREE.Object3D; top: number; idx?: number } | null)[] = [null, null];
 
   // 指向候选缓存：8Hz 重建一次，每帧射线命中判定复用（消除每帧 200+ 临时对象）
 
@@ -1757,6 +1775,20 @@ export class VRSystem {
   private aimRebuildT = 0;                   // 候选重建节流计时（8Hz）
 
   private aimWin: (PointCand | null)[] = [null, null]; // 每手稳定命中槽位（跨帧只读 kind/id/mesh）
+  // ---- VR 装修模式（迷你房间沙盘）交互层状态 ----
+  private decorT = 0;                  // 0=未激活, 0~1=进入补间, 1=激活, -1~0=退出补间
+  private decorIdx = -1;               // 当前选中家具下标（placedFurniture idx，-1=无）
+  private decorDrag = false;           // 正在拖拽迷你家具
+  private decorDragIdx = -1;           // 拖拽中的家具下标
+  private decorGroup: THREE.Group | null = null;   // interior.group 引用（host.getInteriorGroup()）
+  private decorSavePos = new THREE.Vector3();      // 进入前 group 位置（退出还原）
+  private decorSaveRot = 0;            // 进入前 group.rotation.y
+  private decorSaveScale = 1;          // 进入前 group 缩放
+  private decorGrid: THREE.LineSegments | null = null; // 迷你房间网格底座
+  private decorGhost: THREE.Object3D | null = null;    // 添加家具幽灵预览（半透明克隆）
+  private decorGhostId = '';           // 幽灵物品 id
+  private decorGhostPos = new THREE.Vector3();        // 幽灵当前落点（真实房间坐标，已吸附/钳制）
+  private viewYaw = 0;                 // 每帧缓存视线朝向（updateDecor 用）
 
 
 
@@ -2845,10 +2877,13 @@ export class VRSystem {
 
 
     const isFruit = item === 'apple' || item === 'cherry' || item === 'orange' || item === 'peach';
+    const isFish = item === 'crucian' || item === 'carp' || item === 'bass' || item === 'koi';
 
 
 
-    this.vrHeldItem.add(isFruit ? makeFruitDrop(item, 0.9) : makePokeBall(0.85));
+    if (isFruit) this.vrHeldItem.add(makeFruitDrop(item, 0.9));
+    else if (isFish) this.vrHeldItem.add(makeItemDrop(item, 0.85)); // 鱼拿外部 GLB 模型（未加载时 fallback 精灵球）
+    else this.vrHeldItem.add(makePokeBall(0.85));
 
 
 
@@ -2960,7 +2995,18 @@ export class VRSystem {
 
 
 
-    for (const pt of this.pointByHand) if (pt?.kind === 'pickup' && pt.mesh) pt.mesh.scale.setScalar(1);
+    for (const pt of this.pointByHand) if ((pt?.kind === 'pickup' || pt?.kind === 'decor') && pt.mesh) pt.mesh.scale.setScalar(1);
+    // 装修模式残留清理：还原 interior.group 变换并通知 game 退出装修（防 VR 中途退出残留）
+    if (this.decorT > 0) this.host.onDecorExit();
+    if (this.decorT !== 0) {
+      this.decorIdx = -1; this.decorDrag = false; this.decorDragIdx = -1;
+      this.decorGhostClear();
+      this.removeDecorGrid();
+      const g = this.decorGroup;
+      if (g) { g.scale.setScalar(this.decorSaveScale); g.position.copy(this.decorSavePos); g.rotation.y = this.decorSaveRot; }
+      this.decorT = 0;
+      this.decorGroup = null;
+    }
 
 
 
@@ -3158,6 +3204,7 @@ export class VRSystem {
 
 
     const viewYaw = Math.atan2(-this.tmpV.x, -this.tmpV.z);
+    this.viewYaw = viewYaw; // 缓存给装修迷你房间跟随
 
 
 
@@ -3430,6 +3477,8 @@ export class VRSystem {
 
 
     this.updatePointAim(dt);
+    // VR 装修模式（迷你房间沙盘）：补间/跟随/拖拽/幽灵
+    this.updateDecor(dt);
 
 
 
@@ -3591,13 +3640,14 @@ export class VRSystem {
 
       if (best) {
 
-        if (prev?.kind === 'pickup' && prev.mesh && prev.mesh !== best.mesh) prev.mesh.scale.setScalar(1);
+        if ((prev?.kind === 'pickup' || prev?.kind === 'decor') && prev.mesh && prev.mesh !== best.mesh) prev.mesh.scale.setScalar(1);
 
         if (best.kind === 'pickup' && best.mesh) best.mesh.scale.setScalar(1.45);
+        if (best.kind === 'decor' && best.mesh) best.mesh.scale.setScalar(1.25);
 
         let w = this.aimWin[hand];
 
-        if (!w) { w = { kind: 'pickup', id: '', pos: new THREE.Vector3(), top: 0, r2: 0 }; this.aimWin[hand] = w; }
+        if (!w) { w = { kind: 'pickup', id: '', pos: new THREE.Vector3(), top: 0, r2: 0, idx: -1 }; this.aimWin[hand] = w; }
 
         w.kind = best.kind;
 
@@ -3608,12 +3658,13 @@ export class VRSystem {
         w.mesh = best.mesh;
 
         w.top = best.top;
+        w.idx = best.idx;
 
         this.pointByHand[hand] = w;
 
       } else {
 
-        if (prev?.kind === 'pickup' && prev.mesh) prev.mesh.scale.setScalar(1);
+        if ((prev?.kind === 'pickup' || prev?.kind === 'decor') && prev.mesh) prev.mesh.scale.setScalar(1);
 
         this.pointByHand[hand] = null;
 
@@ -3634,7 +3685,7 @@ export class VRSystem {
 
         } else if (this.hoverByHand[hand] < 0) {
 
-          laser.visible = false;
+          laser.visible = this.decorT > 0; // 装修模式激光常亮（默认长度）
 
           laser.scale.z = 1;
 
@@ -3698,8 +3749,25 @@ export class VRSystem {
 
     };
 
+    // 装修模式：迷你家具候选（真实房间坐标 → 世界；命中半径 ×S×1.3 放大）
+    if (this.decorT >= 1) {
+      const S = VRSystem.DECOR_S;
+      for (const p of this.host.getPlacedMini()) {
+        const c = candSlot();
+        const v = vecSlot();
+        p.mesh.getWorldPosition(v);
+        c.kind = 'decor';
+        c.id = String(p.idx);
+        c.idx = p.idx;
+        c.pos = v;
+        c.mesh = p.mesh;
+        c.top = 0;
+        c.r2 = Math.max(p.r * p.r * S * S * 1.3 * 1.3, 0.004); // 地毯 r=0 给最小命中半径
+        cands.push(c);
+      }
+    }
     // 掉落物：pos/mesh 直接引用世界对象，命中判定每帧拿到最新位置
-    for (const p of this.host.getPickups()) {
+    if (this.decorT < 1) for (const p of this.host.getPickups()) {
 
       const c = candSlot();
 
@@ -3720,7 +3788,7 @@ export class VRSystem {
     }
 
     // 花：静态坐标写入池化 Vector3（地面高度在重建时计算一次）
-    for (const f of this.host.getFlowers()) {
+    if (this.decorT < 1) for (const f of this.host.getFlowers()) {
 
       const c = candSlot();
 
@@ -3747,7 +3815,7 @@ export class VRSystem {
     }
 
     // 草
-    for (const w of this.host.getWeeds()) {
+    if (this.decorT < 1) for (const w of this.host.getWeeds()) {
 
       const c = candSlot();
 
@@ -3774,7 +3842,7 @@ export class VRSystem {
     }
 
     // 对话目标：pos 直接引用角色 group.position，走动时命中判定依然最新
-    for (const t of this.host.getTalkTargets()) {
+    if (this.decorT < 1) for (const t of this.host.getTalkTargets()) {
 
       const c = candSlot();
 
@@ -3810,6 +3878,260 @@ export class VRSystem {
 
 
 
+  // ---------------- VR 装修模式（迷你房间沙盘）交互层 ----------------
+  private static DECOR_S = 0.08;             // 迷你房间缩放系数（16×11m → 1.28×0.88m）
+
+  private enterDecor() {
+    if (this.decorT !== 0 || this.host.getInside() !== '你的家') return;
+    const group = this.host.getInteriorGroup();
+    if (!group) return;
+    this.decorGroup = group;
+    this.decorSavePos.copy(group.position);
+    this.decorSaveRot = group.rotation.y;
+    this.decorSaveScale = group.scale.x || 1;
+    this.host.onDecorEnter();
+    this.ensureDecorGrid();
+    this.decorT = 0.01; // 进入补间
+    this.pulse(1, 0.5, 60);
+    this.drawPhone();
+  }
+
+  private exitDecor() {
+    if (this.decorT <= 0) return;
+    this.decorIdx = -1;
+    this.decorDrag = false;
+    this.decorDragIdx = -1;
+    this.decorGhostClear();
+    this.host.onDecorExit();
+    this.decorT = -0.01; // 退出补间
+    this.pulse(1, 0.5, 60);
+    this.drawPhone();
+  }
+
+  // 每帧：进入/退出补间 + 激活态跟随玩家 + 拖拽 + 幽灵（由主 update 调用）
+  private updateDecor(dt: number) {
+    if (this.decorT === 0 && !this.decorDrag && !this.decorGhost) return;
+    const group = this.decorGroup ?? this.host.getInteriorGroup();
+    if (!group) { this.cleanupDecorExit(); return; }
+    this.decorGroup = group;
+    const S = VRSystem.DECOR_S;
+    const k = Math.min(1, dt * 4); // ≈0.3s 补间（与对话面板 lerp dt*4 一致）
+    if (this.decorT > 0) {
+      // 目标：玩家面前 0.9m（沿视向）、眼高下方 0.75m、门（+z）朝玩家
+      const eyeY = this.host.playerPos.y + (this.host.camera.position.y || 1.5);
+      const tx = this.host.playerPos.x - Math.sin(this.viewYaw) * 0.9;
+      const ty = eyeY - 0.75;
+      const tz = this.host.playerPos.z - Math.cos(this.viewYaw) * 0.9;
+      const tRot = this.viewYaw + Math.PI;
+      if (this.decorT < 1) {
+        group.scale.setScalar(group.scale.x + (S - group.scale.x) * k);
+        group.position.x += (tx - group.position.x) * k;
+        group.position.y += (ty - group.position.y) * k;
+        group.position.z += (tz - group.position.z) * k;
+        const d = Math.atan2(Math.sin(tRot - group.rotation.y), Math.cos(tRot - group.rotation.y));
+        group.rotation.y += d * k;
+        if (Math.abs(group.scale.x - S) < 0.002) { this.decorT = 1; this.snapDecor(group, tx, ty, tz, tRot, S); }
+      } else {
+        this.snapDecor(group, tx, ty, tz, tRot, S); // 激活态每帧跟随玩家
+      }
+    } else {
+      // 退出补间：还原到进入前
+      const tScale = this.decorSaveScale;
+      group.scale.setScalar(group.scale.x + (tScale - group.scale.x) * k);
+      group.position.x += (this.decorSavePos.x - group.position.x) * k;
+      group.position.y += (this.decorSavePos.y - group.position.y) * k;
+      group.position.z += (this.decorSavePos.z - group.position.z) * k;
+      const d = Math.atan2(Math.sin(this.decorSaveRot - group.rotation.y), Math.cos(this.decorSaveRot - group.rotation.y));
+      group.rotation.y += d * k;
+      if (Math.abs(group.scale.x - tScale) < 0.002) {
+        group.scale.setScalar(tScale);
+        group.position.copy(this.decorSavePos);
+        group.rotation.y = this.decorSaveRot;
+        this.decorT = 0;
+        this.cleanupDecorExit();
+      }
+    }
+    // 网格底座跟随迷你房间（略低于地板，呈底座）
+    if (this.decorGrid) {
+      this.decorGrid.position.set(group.position.x, group.position.y - 0.01, group.position.z);
+      this.decorGrid.rotation.y = group.rotation.y;
+    }
+    // 激活态：拖拽更新 + 幽灵跟随
+    if (this.decorT >= 1) {
+      this.updateDecorDrag();
+      this.updateDecorGhost();
+    }
+  }
+
+  private snapDecor(group: THREE.Group, tx: number, ty: number, tz: number, tRot: number, S: number) {
+    group.scale.setScalar(S);
+    group.position.set(tx, ty, tz);
+    group.rotation.y = tRot;
+  }
+
+  private cleanupDecorExit() {
+    this.removeDecorGrid();
+    this.decorGhostClear();
+    this.decorDrag = false;
+    this.decorDragIdx = -1;
+    this.decorIdx = -1;
+    this.decorGroup = null;
+  }
+
+  // 网格底座：1.44×1.44m 半透明网格（0.08m/格 = 1m 房间步长），进入时创建退出时移除
+  private ensureDecorGrid() {
+    if (this.decorGrid) return;
+    const half = 0.72;
+    const lines = 18;
+    const pts: number[] = [];
+    for (let i = 0; i <= lines; i++) {
+      const v = -half + i * ((2 * half) / lines);
+      pts.push(v, 0, -half, v, 0, half);
+      pts.push(-half, 0, v, half, 0, v);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const grid = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      color: 0x8affaa, transparent: true, opacity: 0.35, depthWrite: false,
+    }));
+    this.host.scene.add(grid);
+    this.decorGrid = grid;
+  }
+
+  private removeDecorGrid() {
+    if (this.decorGrid) {
+      this.host.scene.remove(this.decorGrid);
+      this.decorGrid.geometry.dispose();
+      (this.decorGrid.material as THREE.Material).dispose();
+      this.decorGrid = null;
+    }
+  }
+
+  // 拖拽：左手扳机抓起迷你家具 → 射线打到迷你地板平面（世界 Y = 组位置 y）
+  // worldToLocal 已含 S 缩放（组 matrixWorld = T·R·S），得到真实房间坐标 →
+  // 0.5m 网格吸附 → 钳制 → 实时改 mesh 局部位置（不重建）；松手写回
+  private updateDecorDrag() {
+    if (!this.decorDrag) return;
+    const c = this.controllers[0];
+    const group = this.decorGroup;
+    if (!c || !group) { this.decorDrag = false; return; }
+    if (!this.triggerHeld[0]) { this.decorDrop(); return; } // 松手
+    const mesh = this.decorDragIdx >= 0 ? this.decorMesh(this.decorDragIdx) : null;
+    if (!mesh) { this.decorDrag = false; return; }
+    const planeY = group.getWorldPosition(this.tmpA).y;
+    const origin = c.getWorldPosition(this.tmpB);
+    const dir = this.tmpV.set(0, 0, -1).applyQuaternion(c.getWorldQuaternion(this.tmpQ));
+    const denom = dir.y;
+    if (Math.abs(denom) < 1e-4) return;
+    const t = (planeY - origin.y) / denom;
+    if (t < 0.05 || t > 4) return;
+    const hit = this.tmpV2.copy(origin).addScaledVector(dir, t);
+    const local = group.worldToLocal(hit);
+    mesh.position.x = this.clampDecorX(Math.round(local.x / 0.5) * 0.5);
+    mesh.position.z = this.clampDecorZ(Math.round(local.z / 0.5) * 0.5);
+  }
+
+  private decorDrop() {
+    this.decorDrag = false;
+    if (this.decorDragIdx < 0) return;
+    const mesh = this.decorMesh(this.decorDragIdx);
+    if (mesh) this.host.onDecorMove(this.decorDragIdx, mesh.position.x, mesh.position.z, mesh.rotation.y);
+    this.decorDragIdx = -1;
+  }
+
+  // 幽灵：decor:add 后创建半透明克隆跟随左手激光落点；扳机放置（保持可连放）；B 取消
+  private decorGhostStart(id: string) {
+    this.decorGhostClear();
+    const good = GOOD_BY_ID[id];
+    if (!good) return;
+    const model = modelForGood(good);
+    model.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!(m as THREE.Mesh).isMesh) return;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) {
+        if (!mat) continue;
+        mat.transparent = true;
+        mat.opacity = 0.6;
+        mat.depthWrite = false;
+      }
+    });
+    this.host.scene.add(model);
+    this.decorGhost = model;
+    this.decorGhostId = id;
+  }
+
+  private decorGhostClear() {
+    if (this.decorGhost) {
+      this.host.scene.remove(this.decorGhost);
+      this.decorGhost.traverse(o => {
+        const m = o as THREE.Mesh;
+        if (m.geometry) m.geometry.dispose();
+        const mats = Array.isArray(m.material) ? m.material : m.material ? [m.material] : [];
+        for (const mat of mats) if (mat) mat.dispose();
+      });
+      this.decorGhost = null;
+    }
+    this.decorGhostId = '';
+  }
+
+  private updateDecorGhost() {
+    if (!this.decorGhost) return;
+    const c = this.controllers[0];
+    const group = this.decorGroup;
+    if (!c || !group) return;
+    const S = VRSystem.DECOR_S;
+    const planeY = group.getWorldPosition(this.tmpA).y;
+    const origin = c.getWorldPosition(this.tmpB);
+    const dir = this.tmpV.set(0, 0, -1).applyQuaternion(c.getWorldQuaternion(this.tmpQ));
+    const denom = dir.y;
+    if (Math.abs(denom) < 1e-4) return;
+    const t = (planeY - origin.y) / denom;
+    if (t < 0.05 || t > 4) return;
+    const hit = this.tmpV2.copy(origin).addScaledVector(dir, t);
+    const local = group.worldToLocal(hit);
+    const sx = this.clampDecorX(Math.round(local.x / 0.5) * 0.5);
+    const sz = this.clampDecorZ(Math.round(local.z / 0.5) * 0.5);
+    this.decorGhostPos.set(sx, 0, sz);
+    const wp = this.tmpV.copy(this.decorGhostPos); // localToWorld 已含组缩放 S，勿再乘
+    const world = group.localToWorld(wp);
+    this.decorGhost.position.copy(world);
+    this.decorGhost.scale.setScalar(S);
+    this.decorGhost.rotation.y = group.rotation.y;
+  }
+
+  private decorMesh(idx: number): THREE.Object3D | null {
+    const list = this.host.getPlacedMini();
+    for (const p of list) if (p.idx === idx) return p.mesh;
+    return null;
+  }
+
+  private clampDecorX(v: number) { return Math.max(-7, Math.min(7, v)); }
+  private clampDecorZ(v: number) { return Math.max(-4.4, Math.min(4.2, v)); }
+
+  // 装修模式 A/B 键：A(4)=旋转选中家具 π/4，B(5)=移除选中（或取消幽灵）
+  private decorBtn(n: number, hand: number) {
+    if (this.decorGhost) {
+      if (n === 5) { this.decorGhostClear(); this.pulse(hand, 0.4, 40); }
+      return;
+    }
+    if (this.decorIdx < 0) return;
+    const mesh = this.decorMesh(this.decorIdx);
+    if (n === 4) {
+      if (!mesh) return;
+      mesh.rotation.y += Math.PI / 4;
+      if (!this.decorDrag) this.host.onDecorMove(this.decorIdx, mesh.position.x, mesh.position.z, mesh.rotation.y);
+      this.pulse(hand, 0.4, 40);
+    } else if (n === 5) {
+      this.decorDrag = false;
+      this.decorDragIdx = -1;
+      const idx = this.decorIdx;
+      this.decorIdx = -1;
+      this.host.onDecorRemove(idx);
+      this.pulse(hand, 0.5, 50);
+    }
+  }
+
   // ---------------- 原地踏步 → 写入触摸输入通道（复用现有移动/碰撞逻辑）----------------
 
 
@@ -3826,6 +4148,13 @@ export class VRSystem {
 
 
 
+    // 装修迷你房间期间锁定原地踏步移动（进入补间~激活）
+    if (this.decorT > 0) {
+      const touch = this.host.touch;
+      touch.dx = 0; touch.dy = 0; touch.run = false;
+      void viewYaw; void dt;
+      return;
+    }
     const speed = this.march.speed;
 
 
@@ -3946,7 +4275,7 @@ export class VRSystem {
 
 
 
-  private phonePages = ['map', 'bag', 'tool'] as const; // 右手手机三页
+  private phonePages = ['map', 'bag', 'tool', 'decor'] as const; // 右手手机四页
 
 
 
@@ -4490,7 +4819,10 @@ export class VRSystem {
 
 
 
-        if (pressed(n) && !this.btnPrev[key(n)]) this.host.onCycleTool(dir);
+        if (pressed(n) && !this.btnPrev[key(n)]) {
+          if (this.decorT > 0) this.decorBtn(n, i);
+          else this.host.onCycleTool(dir);
+        }
 
 
 
@@ -4554,7 +4886,7 @@ export class VRSystem {
 
 
 
-    const prefix = this.phoneTab === 'bag' ? 'item:' : this.phoneTab === 'tool' ? 'tool:' : '@none@';
+    const prefix = this.phoneTab === 'bag' ? 'item:' : this.phoneTab === 'tool' ? 'tool:' : this.phoneTab === 'decor' ? 'decor:' : '@none@';
 
 
 
@@ -4730,6 +5062,30 @@ export class VRSystem {
 
 
 
+    // 装修模式：点选迷你家具（hand=0 抓起拖拽；挂画仅选中）或放置幽灵
+    if (this.decorT >= 1) {
+      if (this.decorGhost) {
+        const n = this.host.getInventory().find(([id]) => id === this.decorGhostId)?.[1] ?? 0;
+        if (n <= 0) { this.decorGhostClear(); return; }
+        this.host.onDecorAdd(this.decorGhostId, this.decorGhostPos.x, this.decorGhostPos.z);
+        this.pulse(hand, 0.6, 60);
+        return; // 保持幽灵可连放
+      }
+      const pt = this.pointByHand[hand];
+      if (pt && pt.kind === 'decor' && pt.idx !== undefined && pt.mesh) {
+        this.decorIdx = pt.idx;
+        if (hand === 0 && pt.mesh.position.y <= 0.5) {
+          // 落地家具：抓起拖拽
+          this.decorDrag = true;
+          this.decorDragIdx = pt.idx;
+          this.pulse(hand, 0.5, 50);
+        } else {
+          // 挂画（MVP：仅选中，可 A 旋转 / B 移除，不沿墙拖拽）或右手点选
+          this.pulse(hand, 0.4, 40);
+        }
+        return;
+      }
+    }
     const dlg = store.state.dialog;
 
 
@@ -6203,7 +6559,7 @@ export class VRSystem {
 
 
 
-    const tabs: [string, 'map' | 'bag' | 'tool'][] = [['🗺️ 地图', 'map'], ['🎒 背包', 'bag'], ['🔧 工具', 'tool']];
+    const tabs: [string, 'map' | 'bag' | 'tool' | 'decor'][] = [['🗺️ 地图', 'map'], ['🎒 背包', 'bag'], ['🔧 工具', 'tool'], ['🏠 装修', 'decor']];
 
 
 
@@ -6219,7 +6575,7 @@ export class VRSystem {
 
 
 
-      const bx = 18 + i * 162, by = 14, bw = 150, bh = 54;
+      const bx = 12 + i * 124, by = 14, bw = 116, bh = 54;
 
 
 
@@ -6332,6 +6688,7 @@ export class VRSystem {
 
 
     else if (this.phoneTab === 'bag') this.drawPhoneBag(ctx, s);
+    else if (this.phoneTab === 'decor') this.drawPhoneDecor(ctx);
 
 
 
@@ -7405,6 +7762,110 @@ export class VRSystem {
 
 
 
+  // 装修页：进入/退出按钮 + 家具网格（添加）+ 墙纸/地板列表 + 操作说明
+  private drawPhoneDecor(ctx: CanvasRenderingContext2D) {
+    const atHome = this.host.getInside() === '你的家';
+    const active = this.decorT !== 0;
+    let itemIdx = 0;
+    const inv = this.host.getInventory().filter(([, n]) => n > 0);
+    const furn = inv.filter(([id]) => {
+      const g = GOOD_BY_ID[id];
+      return g && g.cat === 'furniture' && g.shape !== 'wallpaper' && g.shape !== 'flooring';
+    });
+    const deco = inv.filter(([id]) => {
+      const g = GOOD_BY_ID[id];
+      return g && (g.shape === 'wallpaper' || g.shape === 'flooring');
+    });
+    // 顶部：进入/退出装修（非自己家时禁用并提示）
+    if (!atHome) {
+      ctx.fillStyle = '#e8a0a0';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText('仅可在自己家装修', 18, 112);
+      ctx.fillStyle = '#8fa8c8';
+      ctx.font = '20px sans-serif';
+      ctx.fillText('在「你的家」里打开本页即可', 18, 142);
+    } else {
+      const bx = 18, by = 84, bw = 476, bh = 58;
+      const glow = this.btnGlow(this.phoneBtns.length, itemIdx);
+      ctx.fillStyle = active ? '#a8563a' : glow ? '#5a7fd9' : '#2f6a48';
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 12);
+      ctx.fill();
+      if (glow) { ctx.strokeStyle = '#ffe98a'; ctx.lineWidth = 4; ctx.stroke(); }
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 26px sans-serif';
+      ctx.fillText(active ? '🏠 退出装修（保存）' : '🛠️ 进入装修', bx + 138, by + 39);
+      this.phoneBtns.push({ x: bx, y: by, w: bw, h: bh, action: active ? 'decor:exit' : 'decor:enter' });
+      itemIdx++;
+    }
+    if (!active) {
+      ctx.fillStyle = '#8fa8c8';
+      ctx.font = '20px sans-serif';
+      ctx.fillText('进入后：激光点选家具，扳机拖拽，A 旋转，B 移除', 18, 640);
+      ctx.fillText('网格吸附 0.5m · 墙纸/地板即时生效', 18, 668);
+      return;
+    }
+    // 中部：库存家具网格（可添加）
+    ctx.fillStyle = '#8fa8c8';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(`家具（点选后扳机放置 ×${furn.length}）`, 18, 160);
+    furn.slice(0, 8).forEach(([id, n], i) => {
+      const col = i % 4, row = Math.floor(i / 4);
+      const bx = 18 + col * 120, by = 172 + row * 100, bw = 108, bh = 90;
+      const btnIdx = this.phoneBtns.length;
+      const glow = this.btnGlow(btnIdx, itemIdx);
+      ctx.fillStyle = glow ? '#5a7fd9' : '#2a3a52';
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 12);
+      ctx.fill();
+      if (glow) { ctx.strokeStyle = '#ffe98a'; ctx.lineWidth = 4; ctx.stroke(); }
+      const g = GOOD_BY_ID[id];
+      ctx.font = '38px sans-serif';
+      ctx.fillText(g?.icon ?? '❓', bx + 10, by + 48);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText(`×${n}`, bx + 62, by + 76);
+      this.phoneBtns.push({ x: bx, y: by, w: bw, h: bh, action: `decor:add:${id}` });
+      itemIdx++;
+    });
+    if (!furn.length) {
+      ctx.fillStyle = '#8fa8c8';
+      ctx.font = '20px sans-serif';
+      ctx.fillText('背包里没有可摆放的家具', 18, 200);
+    }
+    // 下部：墙纸 / 地板列表（点击即时生效）
+    ctx.fillStyle = '#8fa8c8';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(`墙纸 / 地板（×${deco.length}）`, 18, 392);
+    deco.slice(0, 8).forEach(([id, n], i) => {
+      const col = i % 4, row = Math.floor(i / 4);
+      const bx = 18 + col * 120, by = 404 + row * 100, bw = 108, bh = 90;
+      const btnIdx = this.phoneBtns.length;
+      const glow = this.btnGlow(btnIdx, itemIdx);
+      ctx.fillStyle = glow ? '#5a7fd9' : '#2a3a52';
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 12);
+      ctx.fill();
+      if (glow) { ctx.strokeStyle = '#ffe98a'; ctx.lineWidth = 4; ctx.stroke(); }
+      const g = GOOD_BY_ID[id];
+      ctx.font = '38px sans-serif';
+      ctx.fillText(g?.icon ?? '❓', bx + 10, by + 48);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText(`×${n}`, bx + 62, by + 76);
+      const kind = g?.shape === 'flooring' ? 'floor' : 'wall';
+      this.phoneBtns.push({ x: bx, y: by, w: bw, h: bh, action: `decor:${kind}:${g?.set ?? ''}` });
+      itemIdx++;
+    });
+    // 底部操作说明
+    ctx.fillStyle = '#ffe9a8';
+    ctx.font = '20px sans-serif';
+    ctx.fillText('A 旋转 · B 移除 · 扳机拖拽 · 网格 0.5m', 18, 628);
+    ctx.fillStyle = '#8fa8c8';
+    ctx.fillText('选家具后点「decor:add」可连放；B 取消幽灵', 18, 656);
+    ctx.fillText('墙纸/地板点击即时生效', 18, 684);
+  }
+
   private execPhoneBtn(action: string) {
 
 
@@ -7421,7 +7882,7 @@ export class VRSystem {
 
 
 
-    if (kind === 'tab') { this.phoneTab = payload as 'map' | 'bag' | 'tool'; this.selMode = false; }
+    if (kind === 'tab') { this.phoneTab = payload as 'map' | 'bag' | 'tool' | 'decor'; this.selMode = false; }
 
 
 
@@ -7429,6 +7890,15 @@ export class VRSystem {
 
 
 
+    else if (kind === 'decor') {
+      // decor:enter / decor:exit / decor:add:<id> / decor:wall:<set> / decor:floor:<set>
+      const [act, arg] = payload.split(':');
+      if (act === 'enter') this.enterDecor();
+      else if (act === 'exit') this.exitDecor();
+      else if (act === 'add' && this.decorT > 0) this.decorGhostStart(arg);
+      else if (act === 'wall' && this.decorT > 0) this.host.onDecorSet('wall', arg);
+      else if (act === 'floor' && this.decorT > 0) this.host.onDecorSet('floor', arg);
+    }
     else if (kind === 'tool') this.host.onSelectTool(payload);
 
 
@@ -8751,7 +9221,7 @@ export class VRSystem {
 
 
 
-    const showLaser = !!(panel && panel.visible && this.btnRects.length > 0);
+    const showLaser = this.decorT > 0 || !!(panel && panel.visible && this.btnRects.length > 0); // 装修模式激光常亮
 
 
 
