@@ -454,6 +454,8 @@ export class Game {
 
   private castPower = 0;      // 蓄力 0~1
 
+  private fishBar: { g: THREE.Group; fill: THREE.Mesh } | null = null;  // 蓄力进度条（世界空间，VR 可见）
+
   private nibbleT = 0;        // 假咬节奏
 
   private nibbleCount = 0;
@@ -962,13 +964,43 @@ export class Game {
 
         if (store.state.dialog || store.state.shopOpen) return;
 
-        // 工具类动作必须「扳机+挥臂」（咬钩收竿除外，留给本能反应），扳机单独扣只执行非工具交互
-
         const it = this.findInteract();
+
+        // 钓鱼：长按扳机蓄力（松开抛竿）——替代“扳机被挥臂占用”的旧逻辑，优先蓄力
+
+        if (it && it.kind === 'fish' && this.fishState === 'idle') {
+
+          this.startCharge();
+
+          this.currentPrompt = '松开抛竿！蓄力中…';
+
+          store.patch({ prompt: this.currentPrompt });
+
+          return;
+
+        }
+
+        // 蓄力中再扣扳机：忽略，避免误取消蓄力
+
+        if (it && it.kind === 'reel' && this.fishState === 'charging') return;
+
+        // 工具类动作必须「扳机+挥臂」（咬钩收竿除外，留给本能反应），扳机单独扣只执行非工具交互
 
         if (it && Game.VR_SWING_KINDS.has(it.kind) && it.kind !== 'reel') return;
 
         this.interact();
+
+      },
+
+      onVrTriggerRelease: () => {
+
+        // 松扳机 → 按当前蓄力抛竿（只在蓄力中有动作），返回是否真的抛竿（供 vr.ts 决定是否震动）
+
+        if (this.fishState !== 'charging') return false;
+
+        this.castRod();
+
+        return true;
 
       },
 
@@ -1316,9 +1348,21 @@ export class Game {
 
   }
 
-  // 文案替换：「像素小岛」→ 自定义岛名
+  // 文案替换：「岛主」→ 玩家名、「像素小岛」→ 岛名（昵称「小岛主」不替换）
 
-  private tt(s: string) { return s.replaceAll('像素小岛', this.islandName); }
+  private tt(s: string) {
+
+    return s
+
+      .replaceAll('小岛主', '\u0001')   // 先保护昵称，避免被「岛主」规则误伤
+
+      .replaceAll('岛主', this.playerName)
+
+      .replaceAll('像素小岛', this.islandName)
+
+      .replaceAll('\u0001', '小岛主');
+
+  }
 
 
 
@@ -3756,7 +3800,7 @@ export class Game {
 
   private toast(title: string, icon: string, desc = '') {
 
-    store.patch({ toast: { title, icon, desc } });
+    store.patch({ toast: { title: this.tt(title), icon, desc: this.tt(desc) } });
 
     // 黑色提示 1.5 秒后自动消失
 
@@ -3772,7 +3816,7 @@ export class Game {
 
   private dialog(name: string, text: string, actions?: { label: string; command: string }[]) {
 
-    text = this.tt(text); // 「像素小岛」→ 自定义岛名
+    text = this.tt(text); // 「岛主」→ 玩家名、「像素小岛」→ 岛名（昵称「小岛主」除外）
 
     store.patch({ dialog: { name, text, actions } });
 
@@ -3811,6 +3855,8 @@ export class Game {
     const next = this.dialogQueue.shift();
 
     if (next) {
+
+      next.text = this.tt(next.text);   // 队列台词同样做「岛主/像素小岛」替换
 
       store.patch({ dialog: next });
 
@@ -4260,11 +4306,11 @@ export class Game {
 
     if (this.tool === 'rod' && this.fishState === 'idle') {
 
-      if (this.nearWater()) candidates.push({ kind: 'fish', prompt: '长按 E 蓄力，松开抛竿', dist: 1 });
+      if (this.nearWater()) candidates.push({ kind: 'fish', prompt: '长按蓄力，松开抛竿', dist: 1 });
 
     } else if (this.fishState === 'charging') {
 
-      candidates.push({ kind: 'reel', prompt: '松开 E 抛竿！', dist: 0 });
+      candidates.push({ kind: 'reel', prompt: '松开抛竿！蓄力中…', dist: 0 });
 
     } else if (this.fishState === 'bite') {
 
@@ -6484,7 +6530,45 @@ export class Game {
 
     this.castPower = 0;
 
+    this.showFishBar();
+
     this.syncFishingHud();
+
+  }
+
+  // 世界空间蓄力进度条（VR 里 DOM HUD 不可见，用 3D 小条显示蓄力进度）
+
+  private showFishBar() {
+
+    if (!this.fishBar) {
+
+      const g = new THREE.Group();
+
+      const bg = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.07), new THREE.MeshBasicMaterial({ color: 0x1b2a44, transparent: true, opacity: 0.9 }));
+
+      const fg = new THREE.PlaneGeometry(0.5, 0.045);
+
+      fg.translate(0.25, 0, 0);   // 左锚：scale.x 从左侧向右伸长
+
+      const fill = new THREE.Mesh(fg, new THREE.MeshBasicMaterial({ color: 0x4ade80 }));
+
+      fill.position.x = -0.25;
+
+      g.add(bg, fill);
+
+      g.position.y = 1.8;
+
+      g.visible = false;
+
+      this.scene.add(g);
+
+      this.fishBar = { g, fill };
+
+    }
+
+    this.fishBar.fill.scale.x = 0;
+
+    this.fishBar.g.visible = true;
 
   }
 
@@ -6523,6 +6607,8 @@ export class Game {
   // 松开 E：按蓄力决定抛竿距离
 
   private castRod() {
+
+    if (this.fishBar) this.fishBar.g.visible = false;
 
     const dist = 3 + this.castPower * 7;
 
@@ -6701,6 +6787,8 @@ export class Game {
 
   private endFishing() {
 
+    if (this.fishBar) this.fishBar.g.visible = false;
+
     this.fishState = 'idle';
 
     if (this.bobber) this.bobber.visible = false;
@@ -6748,6 +6836,18 @@ export class Game {
       this.castPower = Math.min(1, this.castPower + dt / 1.2);
 
       this.player.armR.rotation.x = -1.4 - this.castPower * 0.6;
+
+      if (this.fishBar) {
+
+        const g = this.fishBar.g;
+
+        g.position.set(this.playerPos.x + Math.sin(this.playerYaw) * 0.4, this.playerPos.y + 1.8, this.playerPos.z + Math.cos(this.playerYaw) * 0.4);
+
+        g.lookAt(this.camera.position);
+
+        this.fishBar.fill.scale.x = Math.max(0.02, this.castPower);
+
+      }
 
       this.syncFishingHud();
 

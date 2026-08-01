@@ -146,6 +146,14 @@ export interface VRHost {
 
 
 
+  onVrTriggerRelease(): boolean;   // 扳机松开 → 钓鱼按蓄力抛竿（返回是否真的抛竿，用于震动反馈）
+
+
+
+
+
+
+
   onCycleTool(dir: number): void;  // A/B 键切换工具
 
 
@@ -2028,6 +2036,10 @@ export class VRSystem {
         domOverlayRequested: !!overlayRoot,
         domOverlayState,
         cssIssue,
+
+
+
+        conclusion: domOverlayState ? 'dom-overlay 生效' : '浏览器未授予 dom-overlay（Quest 限制，已自动使用 3D 面板兜底）',
       });
       // 延后展示 toast：避免被 host.onVRStart() 的「VR 模式」提示（1.5s 后清空）立即覆盖
       setTimeout(() => {
@@ -2038,7 +2050,7 @@ export class VRSystem {
         } else if (domOverlayState) {
           this.diagToast('✅ DOM Overlay 已启用', '🟢', `会话已接受 dom-overlay（type=${domOverlayState.type}），DOM 面板应在头显内可见`, 3500);
         } else {
-          this.diagToast('⚠️ DOM Overlay 未启用', '🥽', 'Quest 可能需开启 WebXR Experiments flag，或改用 3D 面板方案');
+          this.diagToast('⚠️ DOM Overlay 未启用', '🥽', '当前浏览器不支持 DOM Overlay（Quest 限制），已自动使用 3D 面板');
         }
       }, 1800);
 
@@ -2582,7 +2594,23 @@ export class VRSystem {
 
 
 
-      c.addEventListener('selectend', () => { this.triggerHeld[i] = false; });
+      c.addEventListener('selectend', () => {
+
+
+
+        this.triggerHeld[i] = false;
+
+
+
+        // 钓鱼：松扳机抛竿（蓄力中才有动作），抛竿时给震动反馈
+
+
+
+        if (this.host.onVrTriggerRelease()) this.pulse(i, 0.6, 80);
+
+
+
+      });
 
 
 
