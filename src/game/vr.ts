@@ -4348,7 +4348,7 @@ export class VRSystem {
 
 
 
-  private wristPage: 'status' | 'quest' = 'status'; // 左手腕页面
+  private wristPage: 'status' | 'quest' | 'weekly' | 'dex' = 'status'; // 左手腕页面
 
 
 
@@ -4492,7 +4492,7 @@ export class VRSystem {
 
 
 
-            this.wristPage = this.wristPage === 'status' ? 'quest' : 'status';
+            this.wristPage = this.wristPage === 'status' ? 'quest' : this.wristPage === 'quest' ? 'weekly' : this.wristPage === 'weekly' ? 'dex' : 'status';
 
 
 
@@ -5895,7 +5895,7 @@ export class VRSystem {
 
 
 
-    c.width = 192; c.height = 144;
+    c.width = 512; c.height = 384;
 
 
 
@@ -5959,7 +5959,7 @@ export class VRSystem {
 
 
 
-    m.position.set(0, 0.055, 0.06);
+    m.position.set(0, 0.075, 0.09);
 
 
 
@@ -6015,7 +6015,7 @@ export class VRSystem {
 
 
 
-    ctx.scale(0.5, 0.5); // 贴图坐标系 ×0.5 缩放（旧坐标按原尺寸写）
+    ctx.scale(512 / 384, 512 / 384); // 384×288 虚拟坐标放大到 512×384 画布
 
 
 
@@ -6167,7 +6167,7 @@ export class VRSystem {
 
 
 
-    ctx.fillText(this.wristPage === 'status' ? '状态 1/2 ⟷' : '任务 2/2 ⟷', 290, 30);
+    ctx.fillText(this.wristPage === 'status' ? '状态 1/4 ⟷' : this.wristPage === 'quest' ? '任务 2/4 ⟷' : this.wristPage === 'weekly' ? '周常 3/4 ⟷' : '图鉴 4/4 ⟷', 290, 30);
 
 
 
@@ -6254,7 +6254,7 @@ export class VRSystem {
 
 
 
-    } else {
+    } else if (this.wristPage === 'quest') {
 
 
 
@@ -6374,6 +6374,181 @@ export class VRSystem {
 
 
 
+    } else if (this.wristPage === 'weekly') {
+
+
+      // 周常页：本周任务（数据源 store.state.weekly，与手机成就页同源）
+
+
+      if (s.weekly.length === 0) {
+
+
+        ctx.fillStyle = '#8fa8c8';
+
+
+        ctx.font = 'bold 20px sans-serif';
+
+
+        ctx.fillText('📅 本周暂无任务', 18, 140);
+
+
+      } else {
+
+
+        ctx.fillStyle = '#ffd76a';
+
+
+        ctx.font = 'bold 20px sans-serif';
+
+
+        ctx.fillText('📅 本周任务（完成得积分）', 18, 132);
+
+
+        let wy = 172;
+
+
+        for (const t of s.weekly.slice(0, 3)) {
+
+
+          ctx.fillStyle = t.done ? '#7fd97f' : '#c8d4e0';
+
+
+          ctx.font = 'bold 19px sans-serif';
+
+
+          ctx.fillText(`${t.done ? '✅' : '▫️'} ${t.icon} ${t.text} ${Math.min(t.progress, t.need)}/${t.need}`, 18, wy);
+
+
+          ctx.fillStyle = t.done ? '#9fe8b8' : '#6a7f9a';
+
+
+          ctx.font = '14px sans-serif';
+
+
+          ctx.fillText(`+${t.reward} 积分`, 300, wy);
+
+
+          wy += 34;
+
+
+        }
+
+
+      }
+
+
+    } else {
+
+
+      // 图鉴页（精简版）：4 类完成度 + 进度条 + 下一档奖励（与手机图鉴页同数据源）
+
+
+      const dexSet = new Set(s.dex);
+
+
+      const firstSet = new Set(s.firstFlags);
+
+
+      const dGroups: { kind: string; icon: string; name: string; ids: string[] }[] = [
+        { kind: 'bug', icon: '🦋', name: '昆虫', ids: ['butterfly', 'tigerfly', 'dragonfly', 'firefly'] },
+        { kind: 'fish', icon: '🐟', name: '鱼类', ids: ['crucian', 'carp', 'bass', 'koi'] },
+        { kind: 'mineral', icon: '⛏️', name: '矿物', ids: ['ore_copper', 'ore_iron', 'ore_gold', 'diamond'] },
+        { kind: 'flower', icon: '🌸', name: '花卉', ids: ['flower_red', 'flower_yellow', 'flower_white'] },
+      ];
+
+
+      const dM: Record<string, { tiers: { need: number; key: number; bells?: number; miles?: number }[] }> = {
+        bug:     { tiers: [{ need: 2, key: 1, bells: 300 }, { need: 3, key: 3, miles: 400 }, { need: 4, key: 2, miles: 800 }] },
+        fish:    { tiers: [{ need: 2, key: 1, bells: 400 }, { need: 3, key: 3, miles: 500 }, { need: 4, key: 2, miles: 800 }] },
+        mineral: { tiers: [{ need: 2, key: 1, bells: 500 }, { need: 3, key: 3, miles: 600 }, { need: 4, key: 2, miles: 1000 }] },
+        flower:  { tiers: [{ need: 1, key: 1, bells: 300 }, { need: 2, key: 3, miles: 400 }, { need: 3, key: 2, miles: 600 }] },
+      };
+
+
+      const dGot = (kind: string, id: string) => (kind === 'bug' || kind === 'fish') ? dexSet.has(id) : firstSet.has(id);
+
+
+      const dTotal = dGroups.reduce((n, g) => n + g.ids.length, 0);
+
+
+      const dCollected = dGroups.reduce((n, g) => n + g.ids.filter(id => dGot(g.kind, id)).length, 0);
+
+
+      ctx.fillStyle = '#8fa8c8';
+
+
+      ctx.font = 'bold 22px sans-serif';
+
+
+      ctx.fillText(`📖 图鉴　已收集 ${dCollected}/${dTotal}`, 18, 132);
+
+
+      // 双列：左列昆虫/鱼类，右列矿物/花卉
+
+
+      dGroups.forEach((g, i) => {
+
+
+        const colX = i < 2 ? 18 : 200;
+
+
+        const rowY = i % 2 === 0 ? 168 : 226;
+
+
+        const cnt = g.ids.filter(id => dGot(g.kind, id)).length;
+
+
+        const t = g.ids.length;
+
+
+        ctx.fillStyle = '#ffd76a';
+
+
+        ctx.font = 'bold 16px sans-serif';
+
+
+        ctx.fillText(`${g.icon}${g.name} ${cnt}/${t}`, colX, rowY);
+
+
+        ctx.fillStyle = '#233250';
+
+
+        ctx.beginPath();
+
+
+        ctx.roundRect(colX + 100, rowY - 11, 70, 9, 4);
+
+
+        ctx.fill();
+
+
+        ctx.fillStyle = '#4ade80';
+
+
+        ctx.beginPath();
+
+
+        ctx.roundRect(colX + 100, rowY - 11, Math.max(10, 70 * cnt / t), 9, 4);
+
+
+        ctx.fill();
+
+
+        const nextTier = dM[g.kind]?.tiers.find(tier => !firstSet.has(`m_${g.kind}_${tier.key}`));
+
+
+        ctx.fillStyle = nextTier ? '#9fe8b8' : '#ffd76a';
+
+
+        ctx.font = '12px sans-serif';
+
+
+        ctx.fillText(nextTier ? `下档 ${nextTier.need}/${t} 得 ${nextTier.bells ?? nextTier.miles}${nextTier.bells !== undefined ? '金币' : '积分'}` : '🏆 全收集完成', colX, rowY + 18);
+
+
+      });
+
+
     }
 
 
@@ -6478,7 +6653,7 @@ export class VRSystem {
 
 
 
-    c.width = 256; c.height = 360;
+    c.width = 512; c.height = 720;
 
 
 
@@ -6534,7 +6709,7 @@ export class VRSystem {
 
 
 
-    m.position.set(0, 0.06, 0.05);
+    m.position.set(0, 0.085, 0.09);
 
 
 
@@ -6590,7 +6765,7 @@ export class VRSystem {
 
 
 
-    ctx.scale(0.5, 0.5); // 贴图从 512×720 降到 256×360，所有坐标系 ×0.5 缩放
+    ctx.scale(1, 1); // 画布 512×720，与绘制坐标系一致
 
 
 
