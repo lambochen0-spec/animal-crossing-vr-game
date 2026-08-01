@@ -4102,7 +4102,7 @@ export class Game {
 
       const d = Math.hypot(p.x - bb.x, p.z - bb.z);
 
-      if (d < 5.5) candidates.push({ kind: 'repairBridge', prompt: 'E 修理断桥（木材×10 石头×10 金币×3000）', dist: d });
+      if (d < 5.5) candidates.push({ kind: 'repairBridge', prompt: 'E 修理断桥（树枝×10 石头×10 金币×3000）', dist: d });
 
     }
 
@@ -5664,9 +5664,9 @@ export class Game {
 
 
 
-  // 修理通往矿岛的断桥：木材×10 + 石头×10 + 金币×3000
+  // 修理通往矿岛的断桥：树枝×10 + 石头×10 + 金币×3000
 
-  private static BRIDGE_COST = { wood: 10, stone: 10, bells: 3000 };
+  private static BRIDGE_COST = { branch: 10, stone: 10, bells: 3000 };
 
   // VR 挥臂允许触发的交互类型（工具类动作）；其余走近交互只走扳机
 
@@ -5678,7 +5678,7 @@ export class Game {
 
     const lack: string[] = [];
 
-    if ((this.inventory['wood'] ?? 0) < need.wood) lack.push(`木材 ${this.inventory['wood'] ?? 0}/${need.wood}`);
+    if ((this.inventory['branch'] ?? 0) < need.branch) lack.push(`树枝 ${this.inventory['branch'] ?? 0}/${need.branch}`);
 
     if ((this.inventory['stone'] ?? 0) < need.stone) lack.push(`石头 ${this.inventory['stone'] ?? 0}/${need.stone}`);
 
@@ -5688,13 +5688,13 @@ export class Game {
 
       sfx.fail();
 
-      this.dialog('断桥', `通往矿岛的桥断了！修好它需要：木材×${need.wood}、石头×${need.stone}、金币×${need.bells}。现在还缺：${lack.join('、')}。`);
+      this.dialog('断桥', `通往矿岛的桥断了！修好它需要：树枝×${need.branch}、石头×${need.stone}、金币×${need.bells}。现在还缺：${lack.join('、')}。`);
 
       return;
 
     }
 
-    this.removeItem('wood', need.wood);
+    this.removeItem('branch', need.branch);
 
     this.removeItem('stone', need.stone);
 
@@ -7087,7 +7087,7 @@ export class Game {
 
         const need = Game.BRIDGE_COST;
 
-        if ((this.inventory['wood'] ?? 0) >= need.wood && (this.inventory['stone'] ?? 0) >= need.stone && this.bells >= need.bells) {
+        if ((this.inventory['branch'] ?? 0) >= need.branch && (this.inventory['stone'] ?? 0) >= need.stone && this.bells >= need.bells) {
 
           this.bridgeHintDay = this.gameDay;
 
