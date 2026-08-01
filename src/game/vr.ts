@@ -1612,7 +1612,7 @@ export class VRSystem {
 
 
 
-  private phoneTab: 'map' | 'bag' | 'tool' | 'decor' | 'dex' | 'skill' | 'award' = 'map';
+  private phoneTab: 'map' | 'bag' | 'tool' | 'decor' | 'skill' | 'award' = 'map';
 
 
 
@@ -4356,7 +4356,7 @@ export class VRSystem {
 
 
 
-  private phonePages = ['map', 'bag', 'tool', 'decor', 'dex', 'skill', 'award'] as const; // 右手手机七页
+  private phonePages = ['map', 'bag', 'tool', 'decor', 'skill', 'award'] as const; // 右手手机六页
 
 
 
@@ -6440,7 +6440,7 @@ export class VRSystem {
     } else {
 
 
-      // 图鉴页（精简版）：4 类完成度 + 进度条 + 下一档奖励（与手机图鉴页同数据源）
+      // 图鉴页（完整版单页）：4 类全部物品（✅/▫️）+ 进度条 + 下一档奖励（原手机完整版精简搬入）
 
 
       const dexSet = new Set(s.dex);
@@ -6477,13 +6477,13 @@ export class VRSystem {
       ctx.fillStyle = '#8fa8c8';
 
 
-      ctx.font = 'bold 22px sans-serif';
+      ctx.font = 'bold 20px sans-serif';
 
 
-      ctx.fillText(`📖 图鉴　已收集 ${dCollected}/${dTotal}`, 18, 132);
+      ctx.fillText(`📖 图鉴　已收集 ${dCollected}/${dTotal}`, 18, 128);
 
 
-      // 双列：左列昆虫/鱼类，右列矿物/花卉
+      // 双列：左列昆虫/鱼类，右列矿物/花卉；每类标题行（名称 + 进度条），区内物品 2 个一排
 
 
       dGroups.forEach((g, i) => {
@@ -6492,7 +6492,7 @@ export class VRSystem {
         const colX = i < 2 ? 18 : 200;
 
 
-        const rowY = i % 2 === 0 ? 168 : 226;
+        const gy = i % 2 === 0 ? 152 : 204;
 
 
         const cnt = g.ids.filter(id => dGot(g.kind, id)).length;
@@ -6504,10 +6504,13 @@ export class VRSystem {
         ctx.fillStyle = '#ffd76a';
 
 
-        ctx.font = 'bold 16px sans-serif';
+        ctx.font = 'bold 15px sans-serif';
 
 
-        ctx.fillText(`${g.icon}${g.name} ${cnt}/${t}`, colX, rowY);
+        ctx.fillText(`${g.icon} ${g.name} ${cnt}/${t}`, colX, gy);
+
+
+        // 进度条（标题行右侧）
 
 
         ctx.fillStyle = '#233250';
@@ -6516,7 +6519,7 @@ export class VRSystem {
         ctx.beginPath();
 
 
-        ctx.roundRect(colX + 100, rowY - 11, 70, 9, 4);
+        ctx.roundRect(colX + 100, gy - 10, 75, 8, 4);
 
 
         ctx.fill();
@@ -6528,25 +6531,79 @@ export class VRSystem {
         ctx.beginPath();
 
 
-        ctx.roundRect(colX + 100, rowY - 11, Math.max(10, 70 * cnt / t), 9, 4);
+        ctx.roundRect(colX + 100, gy - 10, Math.max(8, 75 * cnt / t), 8, 4);
 
 
         ctx.fill();
 
 
-        const nextTier = dM[g.kind]?.tiers.find(tier => !firstSet.has(`m_${g.kind}_${tier.key}`));
+        // 区内物品：2 个一排（✅ 已收集 / ▫️ 未收集）
 
 
-        ctx.fillStyle = nextTier ? '#9fe8b8' : '#ffd76a';
+        g.ids.forEach((id, k) => {
 
 
-        ctx.font = '12px sans-serif';
+          const has = dGot(g.kind, id);
 
 
-        ctx.fillText(nextTier ? `下档 ${nextTier.need}/${t} 得 ${nextTier.bells ?? nextTier.miles}${nextTier.bells !== undefined ? '金币' : '积分'}` : '🏆 全收集完成', colX, rowY + 18);
+          const ix = colX + (k % 2) * 82;
+
+
+          ctx.fillStyle = has ? '#7ee08a' : '#4a5870';
+
+
+          ctx.font = 'bold 13px sans-serif';
+
+
+          ctx.fillText(`${has ? '✅' : '▫️'} ${ITEMS[id]?.name ?? id}`, ix, gy + 20 + Math.floor(k / 2) * 18);
+
+
+        });
 
 
       });
+
+
+      // 底部一行：下一档奖励（按类别顺序取第一个未领取的里程碑）
+
+
+      let dNext: { g: (typeof dGroups)[number]; tier: { need: number; key: number; bells?: number; miles?: number } } | null = null;
+
+
+      for (const g of dGroups) {
+
+
+        const tier = dM[g.kind]?.tiers.find(t => !firstSet.has(`m_${g.kind}_${t.key}`));
+
+
+        if (tier) { dNext = { g, tier }; break; }
+
+
+      }
+
+
+      ctx.fillStyle = dNext ? '#9fe8b8' : '#ffd76a';
+
+
+      ctx.font = 'bold 12px sans-serif';
+
+
+      ctx.fillText(
+
+
+        dNext
+
+
+          ? `下一奖励：${dNext.g.name} 收集 ${dNext.tier.need}/${dNext.g.ids.length} 种 → ${dNext.tier.bells ?? dNext.tier.miles}${dNext.tier.bells !== undefined ? '金币' : '积分'}`
+
+
+          : '🏆 全收集完成！奖励已领取',
+
+
+        18, 268
+
+
+      );
 
 
     }
@@ -6841,7 +6898,7 @@ export class VRSystem {
 
 
 
-    const tabs: [string, 'map' | 'bag' | 'tool' | 'decor' | 'dex' | 'skill' | 'award'][] = [['🗺️ 地图', 'map'], ['🎒 背包', 'bag'], ['🔧 工具', 'tool'], ['🏠 装修', 'decor'], ['📖 图鉴', 'dex'], ['🎣 技能', 'skill'], ['🏆 成就', 'award']];
+    const tabs: [string, 'map' | 'bag' | 'tool' | 'decor' | 'skill' | 'award'][] = [['🗺️ 地图', 'map'], ['🎒 背包', 'bag'], ['🔧 工具', 'tool'], ['🏠 装修', 'decor'], ['🎣 技能', 'skill'], ['🏆 成就', 'award']];
 
 
 
@@ -6857,7 +6914,7 @@ export class VRSystem {
 
 
 
-      const bx = 5 + i * 72, by = 14, bw = 70, bh = 54; // 七页：收窄标签以全部容纳
+      const bx = 5 + i * 84, by = 14, bw = 80, bh = 54; // 六页：等宽排布
 
 
 
@@ -6971,7 +7028,6 @@ export class VRSystem {
 
     else if (this.phoneTab === 'bag') this.drawPhoneBag(ctx, s);
     else if (this.phoneTab === 'decor') this.drawPhoneDecor(ctx);
-    else if (this.phoneTab === 'dex') this.drawPhoneDex(ctx, s);
     else if (this.phoneTab === 'skill') this.drawPhoneSkill(ctx, s);
     else if (this.phoneTab === 'award') this.drawPhoneAward(ctx, s);
 
@@ -7715,96 +7771,6 @@ export class VRSystem {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-  // 图鉴页：四类收集（虫/鱼/矿物/花），每类带进度条 + 里程碑状态
-  private drawPhoneDex(ctx: CanvasRenderingContext2D, s: typeof store.state) {
-    const dexSet = new Set(s.dex);
-    const firstSet = new Set(s.firstFlags);
-    const groups: { kind: string; icon: string; name: string; ids: string[] }[] = [
-      { kind: 'bug', icon: '🦋', name: '昆虫', ids: ['butterfly', 'tigerfly', 'dragonfly', 'firefly'] },
-      { kind: 'fish', icon: '🐟', name: '鱼类', ids: ['crucian', 'carp', 'bass', 'koi'] },
-      { kind: 'mineral', icon: '⛏️', name: '矿物', ids: ['ore_copper', 'ore_iron', 'ore_gold', 'diamond'] },
-      { kind: 'flower', icon: '🌸', name: '花卉', ids: ['flower_red', 'flower_yellow', 'flower_white'] },
-    ];
-    // 里程碑档位（与 game.ts DEX_MILESTONES 保持一致：need 触发数量 / key firstFlags 后缀 / bells·miles 奖励）
-    const M: Record<string, { tiers: { need: number; key: number; bells?: number; miles?: number }[] }> = {
-      bug:     { tiers: [{ need: 2, key: 1, bells: 300 }, { need: 3, key: 3, miles: 400 }, { need: 4, key: 2, miles: 800 }] },
-      fish:    { tiers: [{ need: 2, key: 1, bells: 400 }, { need: 3, key: 3, miles: 500 }, { need: 4, key: 2, miles: 800 }] },
-      mineral: { tiers: [{ need: 2, key: 1, bells: 500 }, { need: 3, key: 3, miles: 600 }, { need: 4, key: 2, miles: 1000 }] },
-      flower:  { tiers: [{ need: 1, key: 1, bells: 300 }, { need: 2, key: 3, miles: 400 }, { need: 3, key: 2, miles: 600 }] },
-    };
-    const got = (kind: string, id: string) => (kind === 'bug' || kind === 'fish') ? dexSet.has(id) : firstSet.has(id);
-    const total = groups.reduce((n, g) => n + g.ids.length, 0);
-    const collected = groups.reduce((n, g) => n + g.ids.filter(id => got(g.kind, id)).length, 0);
-
-    ctx.fillStyle = '#8fa8c8';
-    ctx.font = 'bold 22px sans-serif';
-    ctx.fillText(`📖 图鉴　已收集 ${collected} / ${total}`, 18, 106);
-
-    let y = 142;
-    for (const g of groups) {
-      const cnt = g.ids.filter(id => got(g.kind, id)).length;
-      const t = g.ids.length;
-      // 类别标题
-      ctx.fillStyle = '#ffd76a';
-      ctx.font = 'bold 20px sans-serif';
-      ctx.fillText(`${g.icon} ${g.name}（${cnt}/${t}）`, 18, y);
-      // 进度条
-      ctx.fillStyle = '#233250';
-      ctx.beginPath();
-      ctx.roundRect(18, y + 10, 476, 10, 5);
-      ctx.fill();
-      ctx.fillStyle = '#4ade80';
-      ctx.beginPath();
-      ctx.roundRect(18, y + 10, Math.max(12, 476 * (cnt / t)), 10, 5);
-      ctx.fill();
-      // 里程碑状态
-      const ms = M[g.kind];
-      const nextTier = ms?.tiers.find(tier => !firstSet.has(`m_${g.kind}_${tier.key}`));
-      ctx.fillStyle = nextTier ? '#9fe8b8' : '#ffd76a';
-      ctx.font = 'bold 14px sans-serif';
-      ctx.fillText(
-        nextTier
-          ? `下一奖励：收集 ${nextTier.need}/${t} 种得 ${nextTier.bells ?? nextTier.miles} ${nextTier.bells !== undefined ? '金币' : '积分'}`
-          : '🏆 全收集完成！奖励已领取',
-        18, y + 32
-      );
-      // 卡片（4 个一排，收窄高度以容纳进度条 + 里程碑行）
-      g.ids.forEach((id, i) => {
-        const col = i % 4;
-        const bx = 18 + col * 120, by = y + 40, bw = 108, bh = 62;
-        const has = got(g.kind, id);
-        const def = ITEMS[id];
-        ctx.fillStyle = has ? '#2a3a52' : '#1a2334';
-        ctx.beginPath();
-        ctx.roundRect(bx, by, bw, bh, 12);
-        ctx.fill();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '30px sans-serif';
-        ctx.fillText(has ? (def?.icon ?? '❓') : '❓', bx + 8, by + 28);
-        ctx.fillStyle = has ? '#ffffff' : '#5c6b82';
-        ctx.font = 'bold 15px sans-serif';
-        ctx.fillText(has ? (def?.name ?? id) : '？？？', bx + 10, by + 50);
-        ctx.fillStyle = has ? '#7ee08a' : '#4a5870';
-        ctx.font = 'bold 20px sans-serif';
-        ctx.fillText(has ? '✓' : '❓', bx + 88, by + 24);
-      });
-      y += 40 + 62 + 12;
-    }
-  }
-
-
   // 技能页：四个生活技能（钓鱼/捉虫/挖矿/园艺），等级 + 经验条 + 被动说明（参照图鉴页布局）
   private drawPhoneSkill(ctx: CanvasRenderingContext2D, s: typeof store.state) {
     const steps = [20, 50, 90, 140, 200]; // 与 game.ts LEVEL_STEPS 一致
@@ -8346,7 +8312,7 @@ export class VRSystem {
 
 
 
-    if (kind === 'tab') { this.phoneTab = payload as 'map' | 'bag' | 'tool' | 'decor' | 'dex' | 'skill' | 'award'; this.selMode = false; }
+    if (kind === 'tab') { this.phoneTab = payload as 'map' | 'bag' | 'tool' | 'decor' | 'skill' | 'award'; this.selMode = false; }
 
 
 
