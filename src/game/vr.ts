@@ -7782,6 +7782,62 @@ export class VRSystem {
 
 
     }
+    // 悬停/选中物品名提示：激光指向背包格（或选项模式光标）→ 底部显示物品名
+    let tipId: string | null = null;
+
+
+    if (this.selMode) {
+
+
+      const si = Math.min(this.selIdx, 15);
+
+
+      const s = inv[si];
+
+
+      if (s) tipId = s[0];
+
+
+    } else if (this.phoneHover >= 0) {
+
+
+      const hb = this.phoneBtns[this.phoneHover];
+
+
+      if (hb && hb.action.startsWith('item:')) tipId = hb.action.slice(5);
+
+
+    }
+
+
+    if (tipId) {
+
+
+      const tip = ITEMS[tipId];
+
+
+      ctx.fillStyle = 'rgba(10,16,28,0.85)';
+
+
+      ctx.beginPath();
+
+
+      ctx.roundRect(18, 636, 476, 42, 10);
+
+
+      ctx.fill();
+
+
+      ctx.fillStyle = '#ffe98a';
+
+
+      ctx.font = 'bold 24px sans-serif';
+
+
+      ctx.fillText(`🎒 选中：${tip?.name ?? tipId}`, 32, 666);
+
+
+    }
 
 
 
