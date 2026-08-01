@@ -1154,13 +1154,20 @@ export class Game {
 
       },
 
-      getFlowers: () => this.inside ? [] : this.world.flowers.map(f => ({ id: f.id, x: f.x, z: f.z, itemId: f.itemId })),
+      getFlowers: () => this.inside ? [] : (this.tool === 'hand' || this.tool === 'shovel') ? this.world.flowers.map(f => ({ id: f.id, x: f.x, z: f.z, itemId: f.itemId })) : [],
 
       getWeeds: () => this.inside ? [] : this.world.weeds.map(w => ({ id: w.id, x: w.x, z: w.z })),
 
       onPointFlower: (id) => {
+        // 手柄指向花的扳机动作跟随手持工具：空手摘花，铲子铲起花苗，其余工具（网/竿/斧）不响应
         const f = this.world.flowers.find(x => x.id === id);
-        if (f) {
+        if (!f) return;
+        if (this.tool === 'shovel') {
+          this.world.removeFlower(f);
+          this.addItem(f.itemId + '_plant');
+          sfx.dig();
+          this.toast(`铲起了${ITEMS[f.itemId].name}花苗！`, '🌱', '拿在手上对草地按 E 可以重新种');
+        } else if (this.tool === 'hand') {
           this.world.removeFlower(f);
           this.addItem(f.itemId);
           sfx.pickup();
@@ -4181,7 +4188,13 @@ export class Game {
 
       if (this.selectedItem === 'sapling' || this.selectedItem === 'seedbag' || (this.selectedItem !== null && ['seed', 'plant'].includes(ITEMS[this.selectedItem]?.category ?? ''))) {
 
-        if (tileType(p.x, p.z) === 'grass') {
+        // 校验落点（玩家面前 1.2 单位）而不是玩家坐标：站在草地边缘时落点可能在路面/水里
+
+        const fx = p.x + Math.sin(this.playerYaw) * 1.2;
+
+        const fz = p.z + Math.cos(this.playerYaw) * 1.2;
+
+        if (tileType(fx, fz) === 'grass') {
 
           const sel = this.selectedItem;
 
@@ -4199,7 +4212,9 @@ export class Game {
 
       for (const f of this.world.flowers) {
 
-        if (near(f.x, f.z, 1.8)) candidates.push({ kind: 'flower', prompt: 'E 摘花', dist: Math.hypot(p.x - f.x, p.z - f.z), target: f });
+        // 防御：摘花候选显式要求空手（即使外层 if 作用域被破坏也安全），铲子只能铲起花苗
+
+        if (this.tool === 'hand' && near(f.x, f.z, 1.8)) candidates.push({ kind: 'flower', prompt: 'E 摘花', dist: Math.hypot(p.x - f.x, p.z - f.z), target: f });
 
       }
 
@@ -5031,13 +5046,30 @@ export class Game {
 
         const p2 = this.playerPos;
 
+        // 落点 = 玩家面前 1.2 单位；所有种植（树苗/花种/花苗/种子）统一校验落点必须是草地，
+        // 否则提示并 return，不消耗物品（站在草地边缘时落点可能落在路面/沙滩/水里）
+
+        const fx = p2.x + Math.sin(this.playerYaw) * 1.2;
+
+        const fz = p2.z + Math.cos(this.playerYaw) * 1.2;
+
+        if (tileType(fx, fz) !== 'grass') {
+
+          sfx.fail();
+
+          this.toast('只能在草地上种植', '⚠️', '挑一块草地再试试');
+
+          break;
+
+        }
+
         if (this.selectedItem?.startsWith('sapling_')) {
 
           // 移栽果树苗：保持原品种
 
           const fid = this.selectedItem.replace('sapling_', '');
 
-          this.world.plantSapling(p2.x, p2.z, fid);
+          this.world.plantSapling(fx, fz, fid);
 
           this.removeItem(this.selectedItem);
 
@@ -5051,7 +5083,7 @@ export class Game {
 
         } else if (this.selectedItem === 'sapling') {
 
-          this.world.plantSapling(p2.x, p2.z);
+          this.world.plantSapling(fx, fz);
 
           this.removeItem('sapling');
 
@@ -5067,7 +5099,15 @@ export class Game {
 
           const fid = pick(FLOWER_IDS);
 
-          this.world.addFlower(p2.x + Math.sin(this.playerYaw) * 1.2, p2.z + Math.cos(this.playerYaw) * 1.2, fid);
+          if (!this.world.addFlower(fx, fz, fid)) {
+
+            sfx.fail();
+
+            this.toast('这里的花种不下啦', '🌷', '这里的土地种满了，换个地方试试');
+
+            break;
+
+          }
 
           this.removeItem('seedbag');
 
@@ -5083,11 +5123,11 @@ export class Game {
 
           const good = GOOD_BY_ID[this.selectedItem];
 
-          const fx = p2.x + Math.sin(this.playerYaw) * 1.2, fz = p2.z + Math.cos(this.playerYaw) * 1.2;
+          let ok = true;
 
           if (this.selectedItem.endsWith('_plant')) {
 
-            this.world.addFlower(fx, fz, this.selectedItem.replace('_plant', '')); // 花苗种回原品种
+            ok = this.world.addFlower(fx, fz, this.selectedItem.replace('_plant', '')); // 花苗种回原品种
 
           } else if (good && good.shape === 'seedling' && good.id.startsWith('s_sapling')) {
 
@@ -5095,7 +5135,17 @@ export class Game {
 
           } else {
 
-            this.world.addFlower(fx, fz, pick(FLOWER_IDS));
+            ok = this.world.addFlower(fx, fz, pick(FLOWER_IDS));
+
+          }
+
+          if (!ok) {
+
+            sfx.fail();
+
+            this.toast('这里的花种不下啦', '🌷', '这里的土地种满了，换个地方试试');
+
+            break;
 
           }
 

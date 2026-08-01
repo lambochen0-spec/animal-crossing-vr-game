@@ -10,6 +10,7 @@ const MODEL_FILES: Record<string, string> = {
   apple: 'models/fruit_apple.glb',
   cherry: 'models/fruit_cherry.glb',
   orange: 'models/fruit_orange.glb',
+  peach: 'models/fruit_apple.glb', // 桃桃果：复用苹果 GLB，靠 getModel 的 per-item 色调改色区分
   crucian: 'models/fish_1.glb',
   carp: 'models/fish_2.glb',
   bass: 'models/fish_3.glb',
@@ -28,6 +29,12 @@ const FALLBACK_COLORS: Record<string, number> = {
   u_cookie: 0xc9855a,
   u_cake: 0xf2a8c0,
   u_bento: 0x5ab88a,
+};
+
+// 复用其他 GLB 时的 per-item 色调（getModel 返回克隆后对材质 color 做替换，peach → 粉橙）
+// 只作用于该 itemId 的克隆：克隆前先复制材质，避免污染缓存里共享的材质对象，不影响 apple 等原模型
+const TINT_COLORS: Record<string, number> = {
+  peach: 0xf5a8b8,
 };
 
 // 已加载的原始 scene（已处理：Lambert 材质 / 降采样 / 归一化），getModel 每次返回克隆
@@ -175,11 +182,31 @@ async function preload(itemId: string): Promise<void> {
   }
 }
 
+// 对克隆组的所有材质替换颜色（用于"复用 GLB + 改色"的物品，如 peach 用苹果模型改粉橙）
+// 注意：scene.clone() 默认共享材质，直接改 color 会污染缓存的共享材质，所以先 clone 材质再改
+function applyTint(g: THREE.Group, color: number): void {
+  g.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material.slice() : [mesh.material];
+    for (let i = 0; i < mats.length; i++) {
+      const m = mats[i] as (THREE.Material & { color?: THREE.Color });
+      if (m?.color) {
+        mats[i] = m.clone();
+        (mats[i] as THREE.MeshLambertMaterial).color.set(color);
+      }
+    }
+    if (Array.isArray(mesh.material)) mesh.material = mats; else mesh.material = mats[0];
+  });
+}
+
 /** 同步返回该物品模型的克隆（外层新 Group，position/scale/rotation 归零，可自由改）；未加载返回 null */
 export function getModel(itemId: string): THREE.Group | null {
   const scene = cache.get(itemId);
   if (!scene) return null;
   const g = new THREE.Group();
   g.add(scene.clone());
+  const tint = TINT_COLORS[itemId];
+  if (tint !== undefined) applyTint(g, tint);
   return g;
 }

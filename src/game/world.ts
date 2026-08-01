@@ -439,7 +439,9 @@ export class World {
       const cap = 220;
       const im = new THREE.InstancedMesh(this.flowerCrossGeo, this.flowerMats[itemId], cap);
       im.castShadow = true;
-      im.frustumCulled = true;
+      // 关闭视锥剔除：实例网格的包围球是首次渲染时计算的，之后新种的花在包围球外会被整批误剔除
+      // （表现为"种下后花不显示"）。每色最多 220 个十字面片，关闭剔除的开销可忽略。
+      im.frustumCulled = false;
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       const zero = new THREE.Matrix4().makeScale(0, 0, 0);
       for (let i = 0; i < cap; i++) im.setMatrixAt(i, zero);
@@ -1607,7 +1609,7 @@ export class World {
     }
   }
 
-  addFlower(x: number, z: number, itemId: string) {
+  addFlower(x: number, z: number, itemId: string): boolean {
     if (!this.flowerMats[itemId]) {
       const colors: Record<string, [string, string]> = {
         flower_red: ['#e2455a', '#ffd34d'],
@@ -1624,11 +1626,12 @@ export class World {
       });
     }
     const fi = this.ensureFlowerInst(itemId);
-    if (!fi.free.length) return; // 槽位满了就不再种（容量 220/色）
+    if (!fi.free.length) return false; // 槽位满了就种不下（容量 220/色），调用方应提示且不消耗物品
     const slot = fi.free.pop()!;
     this.setInst(fi.im, slot, x, groundHeight(x, z), z, 1, 1, 1);
     fi.im.instanceMatrix.needsUpdate = true;
     this.flowers.push({ id: this.nextId++, x, z, itemId, slot });
+    return true;
   }
 
   removeFlower(f: Flower) {
