@@ -718,7 +718,7 @@ export class World {
     mound.position.set(mx, groundHeight(mx, mz), mz);
     this.group.add(mound);
     this.mergables.push(mound);
-    this.colliders.push({ x: mx, z: mz - 1, r: 4.6 });
+    this.colliders.push({ x: mx, z: mz - 1.5, r: 3.9 }); // 洞口碰撞：略收窄+后移，给门口留出站立空间（原 r4.6 顶到门口仅 0.05）
     this.houses.push({ name: '矿洞', x: mx, z: mz + 4.2 }); // 洞口正前方可进入
     // 岛上散落的矿石装饰
     for (const [rx, rz] of [[106, -112], [130, -108], [126, -132], [104, -130]]) {

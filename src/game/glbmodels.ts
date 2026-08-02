@@ -34,7 +34,7 @@ const FALLBACK_COLORS: Record<string, number> = {
 // 复用其他 GLB 时的 per-item 色调（getModel 返回克隆后对材质 color 做替换，peach → 粉橙）
 // 只作用于该 itemId 的克隆：克隆前先复制材质，避免污染缓存里共享的材质对象，不影响 apple 等原模型
 const TINT_COLORS: Record<string, number> = {
-  peach: 0xf5a8b8,
+  peach: 0xffa8c8,
 };
 
 // 已加载的原始 scene（已处理：Lambert 材质 / 降采样 / 归一化），getModel 每次返回克隆
@@ -193,7 +193,10 @@ function applyTint(g: THREE.Group, color: number): void {
       const m = mats[i] as (THREE.Material & { color?: THREE.Color });
       if (m?.color) {
         mats[i] = m.clone();
-        (mats[i] as THREE.MeshLambertMaterial).color.set(color);
+        const cm = mats[i] as THREE.MeshLambertMaterial;
+        cm.color.set(color);
+        cm.map = null;        // 去掉 GLB 原贴图：color × map 会把改色完全盖住（如苹果贴图盖住桃桃果粉红）
+        cm.needsUpdate = true;
       }
     }
     if (Array.isArray(mesh.material)) mesh.material = mats; else mesh.material = mats[0];

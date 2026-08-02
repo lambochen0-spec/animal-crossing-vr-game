@@ -1352,13 +1352,19 @@ export class Game {
 
   private tt(s: string) {
 
+    // 名字以 store 为准：开局起名/读档都会 patch store；this.playerName 在 Game 构造时读 localStorage，早于起名界面，可能滞后
+
+    const pn = store.state.playerName || '岛主';
+
+    const iname = store.state.islandName || '像素小岛';
+
     return s
 
       .replaceAll('小岛主', '\u0001')   // 先保护昵称，避免被「岛主」规则误伤
 
-      .replaceAll('岛主', this.playerName)
+      .replaceAll('岛主', pn)
 
-      .replaceAll('像素小岛', this.islandName)
+      .replaceAll('像素小岛', iname)
 
       .replaceAll('\u0001', '小岛主');
 
@@ -1688,7 +1694,7 @@ export class Game {
 
         skills: this.skills,
 
-        islandName: this.islandName, playerName: this.playerName,
+        islandName: store.state.islandName || this.islandName, playerName: store.state.playerName || this.playerName,
 
       });
 
@@ -1789,6 +1795,8 @@ export class Game {
         this.islandName = d.islandName ?? this.islandName;
 
         this.playerName = d.playerName ?? this.playerName;
+
+        store.patch({ islandName: this.islandName, playerName: this.playerName });   // 同步 store，保证对话替换用的是最新名字
 
         localStorage.setItem('pixel-crossing-names', JSON.stringify({ island: this.islandName, player: this.playerName }));
 
@@ -4548,7 +4556,7 @@ export class Game {
 
         // 称呼优先级：专属昵称 > 一半概率叫玩家名 > 不称呼
 
-        const nickCall = nick ? `${nick}！` : (Math.random() < 0.5 ? `${this.playerName}！` : '');
+        const nickCall = nick ? `${nick}！` : (Math.random() < 0.5 ? `${store.state.playerName || '岛主'}！` : '');
 
         // 原版设定：村民主动送礼概率很低（约 6%），不能次次聊天都送
 
@@ -8453,7 +8461,10 @@ export class Game {
 
       const r = Math.hypot(nx, nz);
 
-      if (r > HALF - 4) { nx *= (HALF - 4) / r; nz *= (HALF - 4) / r; }
+      // 移动半径上限：原 HALF-4=156 会把矿岛东半挡住（矿洞入口 r≈170、矿岛对角 r≈195），
+      // 放宽到 HALF+60=220 覆盖整个矿岛；更远的深海由下方 wet 检查拦截，玩家不会被挡在矿山外
+
+      if (r > HALF + 60) { nx *= (HALF + 60) / r; nz *= (HALF + 60) / r; }
 
       // 深水阻挡（允许滑墙；浅滩沙岸可以行走钓鱼，深水区不可踏入）
 
