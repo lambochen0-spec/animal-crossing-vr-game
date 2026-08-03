@@ -26,7 +26,7 @@ import * as glbmodels from './glbmodels';
 
 import type { InteriorStyle, FurnitureItem } from './villagers';
 
-import { dailyGoods, GOOD_BY_ID } from './shopgoods';
+import { dailyGoods, GOOD_BY_ID, MILES_GOODS } from './shopgoods';
 
 import * as savefile from './savefile';
 
@@ -261,6 +261,18 @@ export class Game {
   private bells = 500;
 
   private miles = 0;
+
+  private bagSlots = 16;    // 背包容量（里程商店可扩容，存档 ?? 16）
+
+  private milesDebt = 0;    // 房贷里程抵扣额（debt2 扩建贷款最多抵 5000，存档 ?? 0）
+
+  // 里程商店定价（Nook Miles 兑换）
+
+  private static BAG_EXPAND_PRICES = [3000, 6000, 12000]; // 口袋扩充 3 档（+4 格/次）
+
+  private static TOOL_TICKET_PRICES = [4000, 6000];       // 铲子升级券（普通→铜 / 铜→铁）
+
+  private static MILES_TO_BELLS = { cost: 200, gain: 250 }; // 里程券应急换金币
 
   // 生活技能经验（fish/bug/mine/garden），等级由 gainSkill 用 LEVEL_STEPS 曲线算出
   private skills: Record<string, { xp: number; lv: number }> = {};
@@ -1172,6 +1184,8 @@ export class Game {
 
       getInventory: () => Object.entries(this.inventory),
 
+      getBagSlots: () => this.bagSlots,
+
       onSelectTool: (t) => { if (this.unlockedTools.has(t as ToolId)) { this.setTool(t as ToolId); sfx.plop(); } },
 
       hasTool: (t) => this.unlockedTools.has(t as ToolId),
@@ -1696,6 +1710,8 @@ export class Game {
 
         islandName: store.state.islandName || this.islandName, playerName: store.state.playerName || this.playerName,
 
+        bagSlots: this.bagSlots, milesDebt: this.milesDebt,
+
       });
 
       localStorage.setItem(SAVE_KEY, text);
@@ -1719,6 +1735,10 @@ export class Game {
       this.bells = d.bells ?? 500;
 
       this.miles = d.miles ?? 0;
+
+      this.bagSlots = d.bagSlots ?? 16;
+
+      this.milesDebt = d.milesDebt ?? 0;
 
       this.inventory = d.inventory ?? {};
 
@@ -3602,6 +3622,8 @@ export class Game {
 
       miles: this.miles,
 
+      bagSlots: this.bagSlots,
+
       inventory: { ...this.inventory },
 
       selectedItem: this.selectedItem,
@@ -3671,6 +3693,14 @@ export class Game {
   }
 
 
+
+  // 背包是否已满（新物品类型放不下；已有类型的堆叠不受限）
+
+  private bagFullFor(id: string): boolean {
+
+    return (this.inventory[id] ?? 0) <= 0 && Object.keys(this.inventory).length >= this.bagSlots;
+
+  }
 
   private addItem(id: string, n = 1) {
 
@@ -4408,6 +4438,18 @@ export class Game {
 
   private collectPickup(pk: Pickup) {
 
+    // 背包已满时新物品捡不起来（保持掉落物留在地上）
+
+    if (pk.item !== 'bells' && this.bagFullFor(pk.item)) {
+
+      this.toast('背包满了！', '🎒', '先卖掉或用掉一些物品，或找喵喵用里程扩容');
+
+      sfx.fail();
+
+      return;
+
+    }
+
     this.world.removePickup(pk);
 
     if (pk.item === 'bells') {
@@ -4470,7 +4512,7 @@ export class Game {
 
         this.isabelle.yaw = Math.atan2(p.x - this.isabelle.group.position.x, p.z - this.isabelle.group.position.z);
 
-        this.dialog('皮卡丘', pick(PIKACHU_LINES));
+        this.pikachuMenu(); // 皮卡丘（服务处向导）：发布/查看任务
 
         break;
 
@@ -6152,13 +6194,13 @@ export class Game {
 
     }
 
-    const q = this.currentQuest();
-
-
-
-    // 商店建成后：随时提供商店服务（卖东西/买种子/升级铲子），任务通过「任务相关」入口
+    // 商店建成后：随时提供商店服务（卖东西/买种子/升级铲子）；任务发布与进度查看在服务处皮卡丘
 
     if (this.world.homeUpgraded) {
+
+      // 有可交付/待还款内容 → 直接走交付/贷款流程（任务发布与进度查看在服务处皮卡丘）
+
+      if (this.questDeliverableNow()) { this.questTalkNook(); return; }
 
       const actions = [
 
@@ -6166,15 +6208,15 @@ export class Game {
 
         { label: `🔨 升级铲子（${['', '普通', '铜铲', '铁铲'][this.shovelLevel]}）`, command: 'upgradeShovel' },
 
+        { label: '🏝️ 评价岛屿', command: 'rateIsland' },
+
+        { label: '🎫 里程兑换', command: 'milesShop' },
+
+        { label: '随便聊聊', command: 'chat' },
+
       ];
 
-      if (q) actions.push({ label: `📋 ${q.title}`, command: 'questTalk' });
-
-      actions.push({ label: '🏝️ 评价岛屿', command: 'rateIsland' });
-
-      actions.push({ label: '随便聊聊', command: 'chat' });
-
-      this.dialog('喵喵', '欢迎光临友好商店喵！要卖点什么，还是看看种子和树苗？', actions);
+      this.dialog('喵喵', '欢迎光临友好商店喵！要卖点什么，还是看看种子和树苗？（新任务发布在服务处，找皮卡丘看喵）', actions);
 
       return;
 
@@ -6182,11 +6224,13 @@ export class Game {
 
 
 
-    // 商店建成前：任务流程优先
+    // 商店建成前：有交付/还款内容 → 直接交付；任务发布与进度查看在服务处
 
-    if (q) { this.questTalkNook(); return; }
+    if (this.questDeliverableNow()) { this.questTalkNook(); return; }
 
     this.dialog('喵喵', pick(NOOK_IDLE_LINES), [
+
+      { label: '📋 任务在哪里？', command: 'questWhere' },
 
       { label: '🏝️ 评价岛屿', command: 'rateIsland' },
 
@@ -6197,6 +6241,88 @@ export class Game {
   }
 
 
+
+  // ===== 皮卡丘（服务处向导）：发布/查看任务（对标原作西施惠）=====
+
+  // 喵喵只管交付/还款/DIY/开店材料：有可操作内容时直接进入交付流程
+
+  private questDeliverableNow(): boolean {
+
+    const q = this.currentQuest();
+
+    if (!q) return false;
+
+    if (q.id === 'openshop' || q.id === 'diy') return true;
+
+    if (q.id === 'debt' || q.id === 'debt2') return true;
+
+    return this.questProgress >= q.need;
+
+  }
+
+  private pikachuMenu() {
+
+    const q = this.currentQuest();
+
+    if (q) {
+
+      // 主线进行中：优先展示当前任务
+
+      this.dialog('皮卡丘', this.pikaQuestText(q), [
+
+        { label: '📋 再看一遍任务详情', command: 'questView' },
+
+        { label: '💬 随便聊聊', command: 'pikaChat' },
+
+        { label: '再见', command: 'cancel' },
+
+      ]);
+
+    } else {
+
+      this.dialog('皮卡丘', '欢迎来到服务处皮卡！我是向导皮卡丘，负责发布岛上的大目标皮卡！', [
+
+        { label: '📋 当前任务', command: 'questView' },
+
+        { label: '💬 随便聊聊', command: 'pikaChat' },
+
+        { label: '再见', command: 'cancel' },
+
+      ]);
+
+    }
+
+  }
+
+  private pikaQuestText(q: { id: string; title: string; need: number; hint: string }): string {
+
+    const pay = q.id === 'debt' || q.id === 'debt2' ? '还款' : '交付';
+
+    return `现在的大目标是「${q.title}」皮卡！${q.hint}皮卡。（进度 ${Math.min(this.questProgress, q.need)}/${q.need}）\n${pay}的事情找友好商店的喵喵就好，任务详情随时来服务处问我皮卡！`;
+
+  }
+
+  private questView() {
+
+    const q = this.currentQuest();
+
+    if (!q) {
+
+      this.dialog('皮卡丘', '岛上的大目标都完成啦皮卡！接下来就自由享受小岛生活吧——钓鱼、开店、攒里程换好东西，想做什么都行皮卡！');
+
+      return;
+
+    }
+
+    this.dialog('皮卡丘', this.pikaQuestText(q));
+
+  }
+
+  private pikaChat() {
+
+    this.dialog('皮卡丘', pick(PIKACHU_LINES));
+
+  }
 
   // 喵喵的任务对话（交付/贷款/DIY）
 
@@ -6248,11 +6374,13 @@ export class Game {
 
     if (q.id === 'debt2') {
 
-      if (this.bells >= 49800) {
+      const need = 49800 - this.milesDebt;
 
-        this.dialog('喵喵', `攒够 49,800 金币了喵！要现在偿还扩建贷款吗？还了就能把房子扩得更大喵！（当前金币：${this.bells}）`, [
+      if (this.bells >= need) {
 
-          { label: '💰 偿还 49,800 金币', command: 'payDebt2' },
+        this.dialog('喵喵', `攒够 ${need.toLocaleString()} 金币了喵！要现在偿还扩建贷款吗？还了就能把房子扩得更大喵！（当前金币：${this.bells}${this.milesDebt ? '，已用里程抵扣 5,000' : ''}）`, [
+
+          { label: `💰 偿还 ${need.toLocaleString()} 金币`, command: 'payDebt2' },
 
           { label: '再等等', command: 'cancel' },
 
@@ -6260,7 +6388,7 @@ export class Game {
 
       } else {
 
-        this.dialog('喵喵', `房子扩建的费用是 49,800 金币喵。你现在有 ${this.bells} 金币，还差 ${49800 - this.bells}。把岛上采到的东西卖给我吧喵！`);
+        this.dialog('喵喵', `房子扩建的费用是 49,800 金币喵${this.milesDebt ? '（已用里程抵扣 5,000，还需 ' + need.toLocaleString() + '）' : ''}。你现在有 ${this.bells} 金币，还差 ${(need - this.bells).toLocaleString()}。把岛上采到的东西卖给我吧喵！`);
 
       }
 
@@ -6310,7 +6438,7 @@ export class Game {
 
     } else {
 
-      this.dialog('喵喵', `${q.title}……${q.hint}喵！（${Math.min(this.questProgress, q.need)}/${q.need}）`);
+      this.dialog('喵喵', '东西还没收集齐喵……任务详情去服务处找皮卡丘看看，东西齐了再来找我交付喵！');
 
     }
 
@@ -6468,9 +6596,11 @@ export class Game {
 
     const q = this.currentQuest();
 
-    if (!q || q.id !== 'debt2' || this.bells < 49800) { this.advanceDialog(); return; }
+    const need = 49800 - this.milesDebt;
 
-    this.addBells(-49800);
+    if (!q || q.id !== 'debt2' || this.bells < need) { this.advanceDialog(); return; }
+
+    this.addBells(-need);
 
     this.questIdx++;
 
@@ -6493,6 +6623,230 @@ export class Game {
   }
 
 
+
+  // ===== 里程兑换商店（Nook Miles：喵喵积分消费体系）=====
+
+  private milesShop() {
+
+    const q = this.currentQuest();
+
+    const actions = [
+
+      { label: '🎒 口袋扩充', command: 'milesBag' },
+
+      { label: '🛋️ 里程限定家具', command: 'milesFurniture' },
+
+      { label: '🔨 铲子升级券', command: 'milesTool' },
+
+      { label: '💰 里程换金币', command: 'milesBells' },
+
+    ];
+
+    if (q && q.id === 'debt2') actions.push({ label: '🏠 房贷里程抵扣', command: 'milesDebt' });
+
+    actions.push({ label: '← 返回', command: 'cancel' });
+
+    this.dialog('喵喵', `里程兑换商店喵！当前里程：${this.miles}。想要点什么？`, actions);
+
+  }
+
+  private milesBagMenu() {
+
+    const lv = Math.floor((this.bagSlots - 16) / 4);
+
+    if (lv >= 3) { this.dialog('喵喵', '背包已经是最大尺寸了喵！'); return; }
+
+    const price = Game.BAG_EXPAND_PRICES[lv];
+
+    this.dialog('喵喵', `口袋扩充 Lv.${lv + 1} 喵！现在 ${this.bagSlots} 格，扩充后 ${this.bagSlots + 4} 格，需要 ${price} 里程。`, [
+
+      { label: `🎒 扩充到 ${this.bagSlots + 4} 格（${price} 里程）`, command: 'milesBagBuy' },
+
+      { label: '← 返回', command: 'milesShop' },
+
+    ]);
+
+  }
+
+  private milesBagBuy() {
+
+    const lv = Math.floor((this.bagSlots - 16) / 4);
+
+    if (lv >= 3) { this.dialog('喵喵', '背包已经最大了喵！'); return; }
+
+    const price = Game.BAG_EXPAND_PRICES[lv];
+
+    if (this.miles < price) { sfx.fail(); this.dialog('喵喵', `里程不够喵！还差 ${price - this.miles} 里程。`); return; }
+
+    this.miles -= price;
+
+    this.bagSlots += 4;
+
+    sfx.fanfare();
+
+    this.toast('口袋扩充完成！', '🎒', `背包现在是 ${this.bagSlots} 格`);
+
+    this.dialog('喵喵', '锵锵！背包变大了一圈喵！以后能装更多东西了喵！');
+
+    this.syncHud();
+
+    this.save();
+
+  }
+
+  private milesFurnitureMenu() {
+
+    this.dialog('喵喵', `里程限定家具喵！都是店里买不到的稀罕货，摆在家里倍有面子！（当前里程：${this.miles}）`, [
+
+      ...MILES_GOODS.map(g => ({ label: `${g.icon} ${g.name}（${g.miles} 里程）`, command: `milesFurnitureBuy:${g.id}` })),
+
+      { label: '← 返回', command: 'milesShop' },
+
+    ]);
+
+  }
+
+  private milesFurnitureBuy(id: string) {
+
+    const g = GOOD_BY_ID[id];
+
+    if (!g || !g.miles) { this.advanceDialog(); return; }
+
+    if (this.miles < g.miles) { sfx.fail(); this.dialog('喵喵', `里程不够喵！还差 ${g.miles - this.miles} 里程。`); return; }
+
+    if (this.bagFullFor(id)) { sfx.fail(); this.dialog('喵喵', '背包满了喵！先腾出点格子再来换吧。'); return; }
+
+    this.miles -= g.miles;
+
+    this.addItem(id);
+
+    sfx.fanfare();
+
+    this.toast(`换到了${g.name}！`, g.icon, '拿在手上，对空地按 E 摆出来');
+
+    this.syncHud();
+
+    this.save();
+
+    this.milesFurnitureMenu(); // 回列表，可多买多摆
+
+  }
+
+  private milesToolMenu() {
+
+    if (this.shovelLevel >= 3) { this.dialog('喵喵', '铲子已经是最顶级的「铁铲」了喵！'); return; }
+
+    const price = Game.TOOL_TICKET_PRICES[this.shovelLevel - 1];
+
+    const nextName = this.shovelLevel === 1 ? '铜铲' : '铁铲';
+
+    const curName = this.shovelLevel === 1 ? '普通铲子' : '铜铲';
+
+    this.dialog('喵喵', `铲子升级券喵！不用挖矿也不用攒材料，直接里程升级成「${nextName}」！（当前：${curName}，需要 ${price} 里程）`, [
+
+      { label: `🔨 兑换「${nextName}」升级券（${price} 里程）`, command: 'milesToolBuy' },
+
+      { label: '← 返回', command: 'milesShop' },
+
+    ]);
+
+  }
+
+  private milesToolBuy() {
+
+    if (this.shovelLevel >= 3) { this.dialog('喵喵', '铲子已经最顶级了喵！'); return; }
+
+    const price = Game.TOOL_TICKET_PRICES[this.shovelLevel - 1];
+
+    if (this.miles < price) { sfx.fail(); this.dialog('喵喵', `里程不够喵！还差 ${price - this.miles} 里程。`); return; }
+
+    this.miles -= price;
+
+    this.shovelLevel++;
+
+    sfx.fanfare();
+
+    this.dialog('喵喵', `锵锵！「${this.shovelLevel === 2 ? '铜铲' : '铁铲'}」完成喵！现在可以下到矿洞第${this.shovelLevel}层了喵！`);
+
+    this.save();
+
+  }
+
+  private milesBellsMenu() {
+
+    const { cost, gain } = Game.MILES_TO_BELLS;
+
+    this.dialog('喵喵', `里程券应急兑换喵：${cost} 里程换 ${gain} 金币，随时都能换！（当前里程：${this.miles}）`, [
+
+      { label: `💰 ${cost} 里程 → ${gain} 金币`, command: 'milesBellsBuy' },
+
+      { label: '← 返回', command: 'milesShop' },
+
+    ]);
+
+  }
+
+  private milesBellsBuy() {
+
+    const { cost, gain } = Game.MILES_TO_BELLS;
+
+    if (this.miles < cost) { sfx.fail(); this.dialog('喵喵', `里程不够喵！至少需要 ${cost} 里程。`); return; }
+
+    this.miles -= cost;
+
+    this.addBells(gain);
+
+    sfx.sell();
+
+    this.toast('里程券兑换成功！', '💰', `+${gain} 金币`);
+
+    this.save();
+
+    this.milesBellsMenu(); // 可连续兑换
+
+  }
+
+  private milesDebtMenu() {
+
+    const q = this.currentQuest();
+
+    if (!q || q.id !== 'debt2') { this.dialog('喵喵', '现在没有要还的房贷喵！'); return; }
+
+    if (this.milesDebt >= 5000) { this.dialog('喵喵', '这次房贷已经用过里程抵扣了喵！'); return; }
+
+    if (this.miles < 5000) { this.dialog('喵喵', `用 5,000 里程可以抵掉 5,000 金币喵。你还差 ${5000 - this.miles} 里程。`); return; }
+
+    this.dialog('喵喵', `房贷里程抵扣喵！扩建贷款 49,800 金币，用 5,000 里程抵掉 5,000 金币，就只剩 44,800 金币了喵！（当前里程：${this.miles}）`, [
+
+      { label: '💳 用 5,000 里程抵 5,000 金币', command: 'milesDebtBuy' },
+
+      { label: '← 返回', command: 'milesShop' },
+
+    ]);
+
+  }
+
+  private milesDebtBuy() {
+
+    const q = this.currentQuest();
+
+    if (!q || q.id !== 'debt2' || this.milesDebt >= 5000 || this.miles < 5000) { this.advanceDialog(); return; }
+
+    this.miles -= 5000;
+
+    this.milesDebt = 5000;
+
+    sfx.fanfare();
+
+    this.toast('房贷里程抵扣成功！', '💳', '扩建贷款还剩 44,800 金币');
+
+    this.syncHud();
+
+    this.save();
+
+    this.questTalkNook(); // 回到欠款提示，可直接偿还
+
+  }
 
   private swingArm(kind: 'swing' | 'dig' | 'chop' = 'swing') { this.player.action(kind, kind === 'swing' ? 0.5 : 0.75); }
 
@@ -8051,7 +8405,35 @@ export class Game {
 
           else if (c.command === 'questTalk') this.questTalkNook();
 
+          else if (c.command === 'questView') this.questView();
+
+          else if (c.command === 'pikaChat') this.pikaChat();
+
+          else if (c.command === 'questWhere') this.dialog('喵喵', '新的任务都发布在服务处的皮卡丘那里喵！它负责发布和查看进度，东西收集好之后来我这里交付或还款就行喵！');
+
           else if (c.command === 'upgradeShovel') this.upgradeShovel();
+
+          else if (c.command === 'milesShop') this.milesShop();
+
+          else if (c.command === 'milesBag') this.milesBagMenu();
+
+          else if (c.command === 'milesBagBuy') this.milesBagBuy();
+
+          else if (c.command === 'milesFurniture') this.milesFurnitureMenu();
+
+          else if (c.command.startsWith('milesFurnitureBuy:')) this.milesFurnitureBuy(c.command.slice('milesFurnitureBuy:'.length));
+
+          else if (c.command === 'milesTool') this.milesToolMenu();
+
+          else if (c.command === 'milesToolBuy') this.milesToolBuy();
+
+          else if (c.command === 'milesBells') this.milesBellsMenu();
+
+          else if (c.command === 'milesBellsBuy') this.milesBellsBuy();
+
+          else if (c.command === 'milesDebt') this.milesDebtMenu();
+
+          else if (c.command === 'milesDebtBuy') this.milesDebtBuy();
 
           else if (c.command === 'sleepSave') this.goSleep(true);
 
@@ -8147,7 +8529,7 @@ export class Game {
 
         case 'buy': {
 
-          if (this.bells >= c.price) {
+          if (this.bells >= c.price && !this.bagFullFor(c.item)) {
 
             this.addBells(-c.price);
 
@@ -8157,6 +8539,12 @@ export class Game {
 
             const boughtCat = ITEMS[c.item]?.category;
             store.patch({ shopLine: `买下了${ITEMS[c.item]?.name}！` + (boughtCat === 'furniture' ? '回家后拿在手上按 E 摆放' : boughtCat === 'use' ? '拿在手上按 E 使用' : '拿在手上对草地按 E 就能种') });
+
+          } else if (this.bells >= c.price) {
+
+            sfx.fail();
+
+            store.patch({ shopLine: '背包满了……先去用掉或卖点东西吧！' });
 
           } else {
 

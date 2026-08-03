@@ -188,6 +188,8 @@ export interface VRHost {
 
   getInventory(): [string, number][]; // 背包物品（右手"手机"显示用）
 
+  getBagSlots(): number;             // 背包容量（里程商店可扩容，背包页按此渲染格子数）
+
 
 
 
@@ -7549,7 +7551,13 @@ export class VRSystem {
 
 
 
-    inv.slice(0, 16).forEach(([id, n], i) => {
+    const slots = this.host.getBagSlots();
+
+    const rows = Math.ceil(slots / 4);
+
+    const pitchY = Math.max(78, Math.min(108, Math.floor((668 - 122) / rows)));
+
+    inv.slice(0, slots).forEach(([id, n], i) => {
 
 
 
@@ -7565,7 +7573,7 @@ export class VRSystem {
 
 
 
-      const bx = 18 + col * 120, by = 122 + row * 108, bw = 108, bh = 98;
+      const bx = 18 + col * 120, by = 122 + row * pitchY, bw = 108, bh = Math.max(60, pitchY - 14);
 
 
 
@@ -7637,7 +7645,7 @@ export class VRSystem {
 
 
 
-      ctx.font = '40px sans-serif';
+      const iconPx = Math.max(22, Math.min(40, bh - 26));
 
 
 
@@ -7645,7 +7653,9 @@ export class VRSystem {
 
 
 
-      ctx.fillText(item?.icon ?? '❓', bx + 10, by + 52);
+      ctx.font = `${iconPx}px sans-serif`;
+
+      ctx.fillText(item?.icon ?? '❓', bx + 10, by + 24 + Math.round(iconPx * 0.7));
 
 
 
@@ -7669,7 +7679,7 @@ export class VRSystem {
 
 
 
-      ctx.fillText(`×${n}`, bx + 52, by + 84);
+      ctx.fillText(`×${n}`, bx + 52, by + bh - 12);
 
 
 
@@ -7749,39 +7759,6 @@ export class VRSystem {
 
 
 
-    if (this.bagMsgT > 0 && this.bagMsg) {
-
-
-
-
-
-
-
-      ctx.fillStyle = '#ffe9a8';
-
-
-
-
-
-
-
-      ctx.font = '20px sans-serif';
-
-
-
-
-
-
-
-      ctx.fillText(this.bagMsg.slice(0, 24), 18, 700);
-
-
-
-
-
-
-
-    }
     // 悬停/选中物品名提示：激光指向背包格（或选项模式光标）→ 底部显示物品名
     let tipId: string | null = null;
 
@@ -7789,7 +7766,7 @@ export class VRSystem {
     if (this.selMode) {
 
 
-      const si = Math.min(this.selIdx, 15);
+      const si = Math.min(this.selIdx, slots - 1);
 
 
       const s = inv[si];
@@ -7810,10 +7787,17 @@ export class VRSystem {
     }
 
 
-    if (tipId) {
+    // 底部提示行：优先显示点选物品说明（bagMsg），否则显示激光 hover / 光标选中的物品名
+    let bottomTxt: string | null = null;
 
 
-      const tip = ITEMS[tipId];
+    if (this.bagMsgT > 0 && this.bagMsg) bottomTxt = this.bagMsg.slice(0, 26);
+
+
+    else if (tipId) bottomTxt = `🎒 选中：${ITEMS[tipId]?.name ?? tipId}`;
+
+
+    if (bottomTxt) {
 
 
       ctx.fillStyle = 'rgba(10,16,28,0.85)';
@@ -7822,19 +7806,19 @@ export class VRSystem {
       ctx.beginPath();
 
 
-      ctx.roundRect(18, 636, 476, 42, 10);
+      ctx.roundRect(18, 676, 476, 40, 10);
 
 
       ctx.fill();
 
 
-      ctx.fillStyle = '#ffe98a';
+      ctx.fillStyle = '#ffe9a8';
 
 
-      ctx.font = 'bold 24px sans-serif';
+      ctx.font = 'bold 20px sans-serif';
 
 
-      ctx.fillText(`🎒 选中：${tip?.name ?? tipId}`, 32, 666);
+      ctx.fillText(bottomTxt, 30, 704);
 
 
     }

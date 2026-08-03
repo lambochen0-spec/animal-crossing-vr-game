@@ -6,6 +6,7 @@ export interface DialogAction { label: string; command: string; }
 export interface HudState {
   bells: number;
   miles: number;
+  bagSlots: number;
   inventory: Record<string, number>;
   selectedItem: string | null; // 手上拿着的（用于种植）
   tool: ToolId;
@@ -51,6 +52,7 @@ export interface HudState {
 export const initialHud: HudState = {
   bells: 0,
   miles: 0,
+  bagSlots: 16,
   inventory: {},
   selectedItem: null,
   tool: 'hand',

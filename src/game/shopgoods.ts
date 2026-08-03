@@ -6,6 +6,8 @@ export interface ShopGood {
   shape: string; c1: string; c2: string;
   desc: string;
   set?: string;   // 所属家具系列 id（series.ts），有贴图的整套家具
+  milesOnly?: boolean; // 仅里程商店兑换（不进每日金币商店轮换）
+  miles?: number;      // 里程价（milesOnly 商品）
 }
 
 type G = [string, string, string, number, ShopGood['cat'], string, string, string, string];
@@ -132,15 +134,24 @@ const RAW: G[] = [
 ];
 
 import { SERIES_GOODS } from './series';
+// 里程限定家具（Nook Miles 兑换，仅里程商店有售，不进每日金币商店轮换；数据进 ITEMS 可摆放/可卖）
+export const MILES_GOODS: ShopGood[] = [
+  { id: 'f_trophy_miles', name: '里程金杯', icon: '🏆', price: 4000, cat: 'furniture', shape: 'trophy', c1: '#f7d02c', c2: '#c9a020', desc: 'Nook 里程商店限定，摆在家里金光闪闪', milesOnly: true, miles: 3000 },
+  { id: 'f_rug_miles', name: 'Nook 印花毯', icon: '🟨', price: 3000, cat: 'furniture', shape: 'rug', c1: '#4ade80', c2: '#f7d02c', desc: '印着 Nook 标志的绿色圆毯', milesOnly: true, miles: 1500 },
+  { id: 'f_doll_miles', name: '里程小熊', icon: '🧸', price: 3000, cat: 'furniture', shape: 'doll', c1: '#f7d02c', c2: '#e8763b', desc: '只有里程商店才有的限量小熊', milesOnly: true, miles: 2000 },
+  { id: 'f_plant_miles', name: '金色盆栽', icon: '🪴', price: 3200, cat: 'furniture', shape: 'plant', c1: '#f7d02c', c2: '#8a6239', desc: '金光闪闪的稀有盆栽', milesOnly: true, miles: 2000 },
+];
+
 export const SHOP_CATALOG: ShopGood[] = [
   ...RAW.map(([id, name, icon, price, cat, shape, c1, c2, desc]) => ({ id, name, icon, price, cat, shape, c1, c2, desc })),
   ...SERIES_GOODS, // 6 套系列家具（墙纸/地板/整套家具，带 SVG 风格贴图）
+  ...MILES_GOODS, // 里程限定家具（仅里程商店兑换）
 ];
 export const GOOD_BY_ID: Record<string, ShopGood> = Object.fromEntries(SHOP_CATALOG.map(g => [g.id, g]));
 
 // 每日轮换 8 件（以日期为种子，全岛同步）
 export function dailyGoods(daySeed: number, n = 8): ShopGood[] {
-  const arr = [...SHOP_CATALOG];
+  const arr = [...SHOP_CATALOG].filter(g => !g.milesOnly); // 里程限定不进每日金币商店
   let s = daySeed * 9301 + 49297;
   for (let i = arr.length - 1; i > 0; i--) {
     s = (s * 233 + 137) % 100000;
